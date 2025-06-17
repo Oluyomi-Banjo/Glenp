@@ -11,6 +11,8 @@ class ApiConstants {
   static const String faceEnroll = '/api/face/enroll';
   static const String faceCheckIn = '/api/face/check-in';
   static const String livenessCheck = '/api/face/liveness-check';
+  static const String ping =
+      '/api/ping'; // May not exist, used for connectivity testing
 }
 
 class AppConstants {

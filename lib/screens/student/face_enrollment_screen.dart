@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:camera/camera.dart';
 import 'package:provider/provider.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -19,7 +20,8 @@ class FaceEnrollmentScreen extends StatefulWidget {
   State<FaceEnrollmentScreen> createState() => _FaceEnrollmentScreenState();
 }
 
-class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen> with WidgetsBindingObserver {
+class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen>
+    with WidgetsBindingObserver {
   late FaceDetectionService _faceService;
   bool _isCameraInitialized = false;
   bool _isProcessing = false;
@@ -51,7 +53,8 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen> with Widget
     if (!_isCameraInitialized) return;
 
     // Handle app lifecycle changes to properly manage camera resources
-    if (state == AppLifecycleState.inactive || state == AppLifecycleState.paused) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused) {
       _faceService.dispose();
     } else if (state == AppLifecycleState.resumed) {
       _initializeCamera();
@@ -60,15 +63,23 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen> with Widget
 
   Future<void> _initializeCamera() async {
     if (!mounted) return;
-    
+
     setState(() {
       _errorMessage = null;
       _statusMessage = 'Initializing camera...';
     });
-    
+
     try {
+      if (kDebugMode) {
+        print('Requesting camera permission...');
+      }
+
       // Request camera permission
       final status = await Permission.camera.request();
+      if (kDebugMode) {
+        print('Camera permission status: $status');
+      }
+
       if (status != PermissionStatus.granted) {
         if (mounted) {
           setState(() {
@@ -76,17 +87,56 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen> with Widget
             _statusMessage = 'Camera access denied';
           });
         }
+
+        // Try to open app settings if permission denied
+        if (status == PermissionStatus.denied ||
+            status == PermissionStatus.permanentlyDenied) {
+          if (kDebugMode) {
+            print('Camera permission denied or permanently denied');
+          }
+
+          final shouldOpenSettings = await showDialog<bool>(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text('Camera Permission Required'),
+                  content: const Text(
+                      'This app needs camera access to enroll your face for attendance. Please grant camera permission in settings.'),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(false),
+                      child: const Text('Cancel'),
+                    ),
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(true),
+                      child: const Text('Open Settings'),
+                    ),
+                  ],
+                ),
+              ) ??
+              false;
+
+          if (shouldOpenSettings) {
+            if (kDebugMode) {
+              print('Opening app settings...');
+            }
+            await openAppSettings();
+          }
+        }
         return;
+      } // Initialize camera
+      if (kDebugMode) {
+        print('Initializing camera through face service...');
       }
-      
-      // Initialize camera
       await _faceService.initializeCamera();
-      
+
       if (mounted) {
         setState(() {
           _isCameraInitialized = true;
           _statusMessage = 'Position your face in the frame';
         });
+        if (kDebugMode) {
+          print('Camera initialized successfully');
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -111,7 +161,7 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen> with Widget
     try {
       // Capture image
       final imageBytes = await _faceService.captureImage();
-      
+
       if (imageBytes == null) {
         setState(() {
           _errorMessage = 'Failed to capture image';
@@ -123,7 +173,7 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen> with Widget
 
       // Convert to base64
       final base64Image = _faceService.imageToBase64(imageBytes);
-      
+
       // Enroll face
       final authService = Provider.of<AuthService>(context, listen: false);
       if (authService.token == null) {
@@ -186,8 +236,10 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen> with Widget
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(12),
-              boxShadow: [                BoxShadow(
-                  color: Colors.black.withAlpha(26), // Equivalent to opacity 0.1
+              boxShadow: [
+                BoxShadow(
+                  color:
+                      Colors.black.withAlpha(26), // Equivalent to opacity 0.1
                   blurRadius: 8,
                   offset: const Offset(0, 2),
                 ),
@@ -257,8 +309,9 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen> with Widget
           ],
         ),
       );
-    } else if (_isCameraInitialized && _faceService.cameraController != null && 
-               _faceService.cameraController!.value.isInitialized) {
+    } else if (_isCameraInitialized &&
+        _faceService.cameraController != null &&
+        _faceService.cameraController!.value.isInitialized) {
       // Camera UI
       return Stack(
         alignment: Alignment.center,
@@ -274,7 +327,7 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen> with Widget
               ),
             ),
           ),
-          
+
           // Face guide circle
           Positioned.fill(
             child: Center(
@@ -318,7 +371,8 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen> with Widget
                 label: const Text('Retry'),
                 onPressed: _initializeCamera,
                 style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
                 ),
               ),
             ],
@@ -354,9 +408,9 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen> with Widget
               fontSize: 16,
             ),
           ),
-          
+
           const SizedBox(height: 16),
-          
+
           // Capture button - only show when camera is ready and not already enrolled
           if (_isCameraInitialized && !_isEnrolled && _errorMessage == null)
             ElevatedButton.icon(

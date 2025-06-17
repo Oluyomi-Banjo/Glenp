@@ -15,21 +15,20 @@ class CourseService extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get error => _error;
   Future<void> fetchCourses(String token, {String? search}) async {
-    // Only set loading state and notify if not already loading
-    if (!_isLoading) {
-      _isLoading = true;
-      _error = null;
-      notifyListeners();
-    }
-    
+    // Set loading state but don't notify during build
+    _isLoading = true;
+    _error = null;
+    // Notify listeners after current build completes
+    Future.microtask(() => notifyListeners());
+
     try {
       String url = '${ApiConstants.baseUrl}${ApiConstants.courses}';
       if (search != null && search.isNotEmpty) {
         url += '?search=$search';
       }
-      
+
       final response = await NetworkUtils.authenticatedGet(url, token);
-      
+
       if (response.statusCode == 200) {
         final List<dynamic> data = jsonDecode(response.body);
         _courses = data.map((json) => Course.fromJson(json)).toList();
@@ -40,11 +39,13 @@ class CourseService extends ChangeNotifier {
       _error = 'Network error: $e';
     } finally {
       _isLoading = false;
-      notifyListeners();
+      // Notify listeners after data is loaded
+      Future.microtask(() => notifyListeners());
     }
   }
 
-  Future<Map<String, dynamic>> createCourse(String token, String name, String code, String passkey) async {
+  Future<Map<String, dynamic>> createCourse(
+      String token, String name, String code, String passkey) async {
     try {
       final response = await NetworkUtils.authenticatedPost(
         '${ApiConstants.baseUrl}${ApiConstants.courses}',
@@ -55,7 +56,7 @@ class CourseService extends ChangeNotifier {
           'passkey': passkey,
         },
       );
-      
+
       if (response.statusCode == 200) {
         final course = Course.fromJson(jsonDecode(response.body));
         _courses.add(course);
@@ -64,7 +65,8 @@ class CourseService extends ChangeNotifier {
       } else {
         return {
           'success': false,
-          'message': 'Failed to create course: ${jsonDecode(response.body)['detail']}',
+          'message':
+              'Failed to create course: ${jsonDecode(response.body)['detail']}',
         };
       }
     } catch (e) {
@@ -72,7 +74,8 @@ class CourseService extends ChangeNotifier {
     }
   }
 
-  Future<Map<String, dynamic>> enrollInCourse(String token, int courseId, String passkey) async {
+  Future<Map<String, dynamic>> enrollInCourse(
+      String token, int courseId, String passkey) async {
     try {
       final response = await NetworkUtils.authenticatedPost(
         '${ApiConstants.baseUrl}${ApiConstants.courses}/$courseId/register',
@@ -82,7 +85,7 @@ class CourseService extends ChangeNotifier {
           'passkey': passkey,
         },
       );
-      
+
       if (response.statusCode == 200) {
         // Refresh courses after successful enrollment
         await fetchCourses(token);
@@ -90,7 +93,8 @@ class CourseService extends ChangeNotifier {
       } else {
         return {
           'success': false,
-          'message': 'Failed to enroll in course: ${jsonDecode(response.body)['detail']}',
+          'message':
+              'Failed to enroll in course: ${jsonDecode(response.body)['detail']}',
         };
       }
     } catch (e) {
@@ -98,13 +102,14 @@ class CourseService extends ChangeNotifier {
     }
   }
 
-  Future<List<AttendanceSession>> getCourseSessions(String token, int courseId) async {
+  Future<List<AttendanceSession>> getCourseSessions(
+      String token, int courseId) async {
     try {
       final response = await NetworkUtils.authenticatedGet(
         '${ApiConstants.baseUrl}${ApiConstants.sessions}/course/$courseId',
         token,
       );
-      
+
       if (response.statusCode == 200) {
         final List<dynamic> data = jsonDecode(response.body);
         return data.map((json) => AttendanceSession.fromJson(json)).toList();
@@ -119,7 +124,8 @@ class CourseService extends ChangeNotifier {
     }
   }
 
-  Future<AttendanceSession?> createAttendanceSession(String token, int courseId) async {
+  Future<AttendanceSession?> createAttendanceSession(
+      String token, int courseId) async {
     try {
       final response = await NetworkUtils.authenticatedPost(
         '${ApiConstants.baseUrl}${ApiConstants.sessions}',
@@ -128,7 +134,7 @@ class CourseService extends ChangeNotifier {
           'course_id': courseId,
         },
       );
-      
+
       if (response.statusCode == 200) {
         return AttendanceSession.fromJson(jsonDecode(response.body));
       } else {
@@ -142,7 +148,8 @@ class CourseService extends ChangeNotifier {
     }
   }
 
-  Future<AttendanceSession?> updateAttendanceSession(String token, int sessionId, bool isOpen) async {
+  Future<AttendanceSession?> updateAttendanceSession(
+      String token, int sessionId, bool isOpen) async {
     try {
       final response = await NetworkUtils.authenticatedPatch(
         '${ApiConstants.baseUrl}${ApiConstants.sessions}/$sessionId',
@@ -151,7 +158,7 @@ class CourseService extends ChangeNotifier {
           'is_open': isOpen,
         },
       );
-      
+
       if (response.statusCode == 200) {
         return AttendanceSession.fromJson(jsonDecode(response.body));
       } else {
@@ -168,12 +175,13 @@ class CourseService extends ChangeNotifier {
   Future<String?> exportAttendance(String token, int courseId) async {
     try {
       final response = await http.get(
-        Uri.parse('${ApiConstants.baseUrl}/api/attendance/export/course/$courseId'),
+        Uri.parse(
+            '${ApiConstants.baseUrl}/api/attendance/export/course/$courseId'),
         headers: {
           'Authorization': 'Bearer $token',
         },
       );
-      
+
       if (response.statusCode == 200) {
         return utf8.decode(response.bodyBytes);
       } else {

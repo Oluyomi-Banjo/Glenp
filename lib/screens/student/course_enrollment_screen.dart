@@ -19,11 +19,13 @@ class _CourseEnrollmentScreenState extends State<CourseEnrollmentScreen> {
   String? _errorMessage;
   String? _successMessage;
   List<Map<String, dynamic>> _availableCourses = [];
-
   @override
   void initState() {
     super.initState();
-    _loadAvailableCourses();
+    // Schedule the loading after the build is complete
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadAvailableCourses();
+    });
   }
 
   @override
@@ -45,13 +47,18 @@ class _CourseEnrollmentScreenState extends State<CourseEnrollmentScreen> {
 
       if (authService.token != null) {
         await courseService.fetchCourses(authService.token!);
-        
-        final courses = courseService.courses;
-        _availableCourses = courses.map((course) => {
-          'id': course.id,
-          'name': course.name,
-          'code': course.code,
-        }).toList();
+
+        // Update state with new data
+        setState(() {
+          final courses = courseService.courses;
+          _availableCourses = courses
+              .map((course) => {
+                    'id': course.id,
+                    'name': course.name,
+                    'code': course.code,
+                  })
+              .toList();
+        });
       }
     } catch (e) {
       setState(() {
@@ -108,7 +115,9 @@ class _CourseEnrollmentScreenState extends State<CourseEnrollmentScreen> {
         _isLoading = false;
       });
     }
-  }  @override
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
@@ -117,7 +126,7 @@ class _CourseEnrollmentScreenState extends State<CourseEnrollmentScreen> {
       body: _buildEnrollmentContent(),
     );
   }
-  
+
   Widget _buildEnrollmentContent() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(AppConstants.defaultPadding),
@@ -167,11 +176,13 @@ class _CourseEnrollmentScreenState extends State<CourseEnrollmentScreen> {
                               itemBuilder: (context, index) {
                                 final course = _availableCourses[index];
                                 return ListTile(
-                                  title: Text('${course['name']} (${course['code']})'),
+                                  title: Text(
+                                      '${course['name']} (${course['code']})'),
                                   subtitle: Text('Course ID: ${course['id']}'),
                                   onTap: () {
                                     setState(() {
-                                      _courseIdController.text = course['id'].toString();
+                                      _courseIdController.text =
+                                          course['id'].toString();
                                     });
                                   },
                                 );
@@ -226,7 +237,8 @@ class _CourseEnrollmentScreenState extends State<CourseEnrollmentScreen> {
                 const SizedBox(height: 24),
 
                 // Error Message
-                if (_errorMessage != null)                    Container(
+                if (_errorMessage != null)
+                  Container(
                     padding: const EdgeInsets.all(8),
                     color: Colors.red.withAlpha(26), // 0.1 * 255 = ~26
                     child: Row(
