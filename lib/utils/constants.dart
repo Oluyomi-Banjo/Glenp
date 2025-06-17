@@ -13,6 +13,7 @@ class ApiConstants {
   static const String livenessCheck = '/api/face/liveness-check';
   static const String ping =
       '/api/ping'; // May not exist, used for connectivity testing
+  static const String enrollment = '/api/courses/enroll';
 }
 
 class AppConstants {

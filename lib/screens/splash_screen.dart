@@ -19,11 +19,11 @@ class _SplashScreenState extends State<SplashScreen> {
   Future<void> _checkAuth() async {
     // Wait for a short delay to show splash screen
     await Future.delayed(const Duration(seconds: 2));
-    
+
     if (!mounted) return;
-    
+
     final authService = Provider.of<AuthService>(context, listen: false);
-    
+
     if (authService.isAuthenticated) {
       if (authService.isStudent) {
         Navigator.of(context).pushReplacementNamed('/student_home');
@@ -52,7 +52,7 @@ class _SplashScreenState extends State<SplashScreen> {
             ],
           ),
         ),
-        child: Column(
+        child: const Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             // Logo or icon
@@ -61,7 +61,7 @@ class _SplashScreenState extends State<SplashScreen> {
               size: 80,
               color: Colors.white,
             ),
-            const SizedBox(height: 24),
+            SizedBox(height: 24),
             // App name
             const Text(
               'University Attendance',

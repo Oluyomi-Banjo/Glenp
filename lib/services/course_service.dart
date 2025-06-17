@@ -77,28 +77,43 @@ class CourseService extends ChangeNotifier {
   Future<Map<String, dynamic>> enrollInCourse(
       String token, int courseId, String passkey) async {
     try {
+      if (kDebugMode) {
+        print('Enrolling in course $courseId with passkey $passkey');
+      }
+
+      final Map<String, dynamic> payload = {
+        'course_id': courseId,
+        'passkey': passkey,
+      };
+
       final response = await NetworkUtils.authenticatedPost(
-        '${ApiConstants.baseUrl}${ApiConstants.courses}/$courseId/register',
+        '${ApiConstants.baseUrl}${ApiConstants.enrollment}',
         token,
-        {
-          'course_id': courseId,
-          'passkey': passkey,
-        },
+        payload,
       );
 
-      if (response.statusCode == 200) {
-        // Refresh courses after successful enrollment
-        await fetchCourses(token);
+      if (kDebugMode) {
+        print('Enrollment response status: ${response.statusCode}');
+        print('Enrollment response body: ${response.body}');
+      }
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
         return {'success': true};
       } else {
+        final Map<String, dynamic> error = jsonDecode(response.body);
         return {
           'success': false,
-          'message':
-              'Failed to enroll in course: ${jsonDecode(response.body)['detail']}',
+          'message': error['detail'] ?? 'Failed to enroll in course',
         };
       }
     } catch (e) {
-      return {'success': false, 'message': 'Network error: $e'};
+      if (kDebugMode) {
+        print('Error enrolling in course: $e');
+      }
+      return {
+        'success': false,
+        'message': 'Network error: $e',
+      };
     }
   }
 
@@ -192,6 +207,107 @@ class CourseService extends ChangeNotifier {
         print('Error exporting attendance: $e');
       }
       return null;
+    }
+  }
+
+  // Get courses the student is enrolled in
+  Future<void> fetchEnrolledCourses(String token, {String? search}) async {
+    // Set loading state but don't notify during build
+    _isLoading = true;
+    _error = null;
+    // Notify listeners after current build completes
+    Future.microtask(() => notifyListeners());
+
+    try {
+      String url = '${ApiConstants.baseUrl}${ApiConstants.courses}/enrolled';
+      if (search != null && search.isNotEmpty) {
+        url += '?search=$search';
+      }
+
+      if (kDebugMode) {
+        print('Fetching enrolled courses from: $url');
+      }
+
+      final response = await NetworkUtils.authenticatedGet(url, token);
+
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        _courses = data.map((json) => Course.fromJson(json)).toList();
+        if (kDebugMode) {
+          print('Fetched ${_courses.length} enrolled courses');
+        }
+      } else {
+        _error = 'Failed to fetch enrolled courses: ${response.statusCode}';
+        if (kDebugMode) {
+          print('Error fetching enrolled courses: ${response.statusCode}');
+          print('Response body: ${response.body}');
+        }
+      }
+    } catch (e) {
+      _error = 'Network error: $e';
+      if (kDebugMode) {
+        print('Error fetching enrolled courses: $e');
+      }
+    } finally {
+      _isLoading = false;
+      // Notify listeners after data is loaded
+      Future.microtask(() => notifyListeners());
+    }
+  }
+
+  // Get all available courses for enrollment
+  Future<void> fetchAvailableCourses(String token,
+      {String? search, String? courseCode}) async {
+    // Set loading state but don't notify during build
+    _isLoading = true;
+    _error = null;
+    // Notify listeners after current build completes
+    Future.microtask(() => notifyListeners());
+
+    try {
+      String url = '${ApiConstants.baseUrl}${ApiConstants.courses}/available';
+
+      // Build query parameters
+      List<String> queryParams = [];
+      if (search != null && search.isNotEmpty) {
+        queryParams.add('search=$search');
+      }
+      if (courseCode != null && courseCode.isNotEmpty) {
+        queryParams.add('code=$courseCode');
+      }
+
+      if (queryParams.isNotEmpty) {
+        url += '?${queryParams.join('&')}';
+      }
+
+      if (kDebugMode) {
+        print('Fetching available courses from: $url');
+      }
+
+      final response = await NetworkUtils.authenticatedGet(url, token);
+
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        _courses = data.map((json) => Course.fromJson(json)).toList();
+        if (kDebugMode) {
+          print('Fetched ${_courses.length} available courses');
+        }
+      } else {
+        _error = 'Failed to fetch available courses: ${response.statusCode}';
+        if (kDebugMode) {
+          print('Error fetching available courses: ${response.statusCode}');
+          print('Response body: ${response.body}');
+        }
+      }
+    } catch (e) {
+      _error = 'Network error: $e';
+      if (kDebugMode) {
+        print('Error fetching available courses: $e');
+      }
+    } finally {
+      _isLoading = false;
+      // Notify listeners after data is loaded
+      Future.microtask(() => notifyListeners());
     }
   }
 }

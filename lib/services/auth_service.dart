@@ -25,11 +25,11 @@ class AuthService extends ChangeNotifier {
   Future<void> _loadUserFromPrefs() async {
     _token = _prefs.getString('token');
     final userJson = _prefs.getString('user');
-    
+
     if (userJson != null) {
       _currentUser = User.fromJson(jsonDecode(userJson));
     }
-    
+
     notifyListeners();
   }
 
@@ -37,16 +37,17 @@ class AuthService extends ChangeNotifier {
     if (_currentUser != null) {
       await _prefs.setString('user', jsonEncode(_currentUser!.toJson()));
     }
-    
+
     if (_token != null) {
       await _prefs.setString('token', _token!);
     }
   }
 
-  Future<Map<String, dynamic>> register(String name, String email, String password, String role) async {
+  Future<Map<String, dynamic>> register(
+      String name, String email, String password, String role) async {
     _isLoading = true;
     notifyListeners();
-    
+
     try {
       final response = await http.post(
         Uri.parse('${ApiConstants.baseUrl}/api/register'),
@@ -58,13 +59,16 @@ class AuthService extends ChangeNotifier {
           'role': role,
         }),
       );
-      
+
       final data = jsonDecode(response.body);
-      
+
       if (response.statusCode == 200) {
         return {'success': true, 'data': data};
       } else {
-        return {'success': false, 'message': data['detail'] ?? 'Registration failed'};
+        return {
+          'success': false,
+          'message': data['detail'] ?? 'Registration failed'
+        };
       }
     } catch (e) {
       return {'success': false, 'message': 'Network error: ${e.toString()}'};
@@ -73,14 +77,17 @@ class AuthService extends ChangeNotifier {
       notifyListeners();
     }
   }
+
   Future<Map<String, dynamic>> login(String email, String password) async {
     _isLoading = true;
     notifyListeners();
-    
+
     try {
-      print('Attempting login for: $email');
-      print('Login URL: ${ApiConstants.baseUrl}/api/login');
-      
+      if (kDebugMode) {
+        print('Attempting login for: $email');
+        print('Login URL: ${ApiConstants.baseUrl}/api/login');
+      }
+
       // First get token
       final tokenResponse = await http.post(
         Uri.parse('${ApiConstants.baseUrl}/api/login'),
@@ -90,18 +97,23 @@ class AuthService extends ChangeNotifier {
           'password': password,
         },
       );
-      
-      print('Login status code: ${tokenResponse.statusCode}');
-      print('Login response body: ${tokenResponse.body}');
-      
+
+      if (kDebugMode) {
+        print('Login status code: ${tokenResponse.statusCode}');
+        print('Login response body: ${tokenResponse.body}');
+      }
+
       if (tokenResponse.statusCode != 200) {
         final tokenData = jsonDecode(tokenResponse.body);
-        return {'success': false, 'message': tokenData['detail'] ?? 'Login failed'};
+        return {
+          'success': false,
+          'message': tokenData['detail'] ?? 'Login failed'
+        };
       }
-      
+
       final tokenData = jsonDecode(tokenResponse.body);
       _token = tokenData['access_token'];
-      
+
       // Get user data from the /me endpoint
       try {
         final userResponse = await http.get(
@@ -110,10 +122,12 @@ class AuthService extends ChangeNotifier {
             'Authorization': 'Bearer $_token',
           },
         );
-        
-        print('User info status code: ${userResponse.statusCode}');
-        print('User info response body: ${userResponse.body}');
-        
+
+        if (kDebugMode) {
+          print('User info status code: ${userResponse.statusCode}');
+          print('User info response body: ${userResponse.body}');
+        }
+
         if (userResponse.statusCode == 200) {
           final userData = jsonDecode(userResponse.body);
           _currentUser = User.fromJson(userData);
@@ -124,7 +138,9 @@ class AuthService extends ChangeNotifier {
           return await _extractUserFromToken(email);
         }
       } catch (e) {
-        print('Error fetching user info: $e');
+        if (kDebugMode) {
+          print('Error fetching user info: $e');
+        }
         // Fallback to parsing JWT
         return await _extractUserFromToken(email);
       }
@@ -135,7 +151,8 @@ class AuthService extends ChangeNotifier {
       notifyListeners();
     }
   }
-    // Helper method to extract user info from JWT token
+
+  // Helper method to extract user info from JWT token
   Future<Map<String, dynamic>> _extractUserFromToken(String email) async {
     try {
       // Parse JWT to get user data
@@ -145,7 +162,7 @@ class AuthService extends ChangeNotifier {
         final normalized = base64Url.normalize(payload);
         final decoded = utf8.decode(base64Url.decode(normalized));
         final Map<String, dynamic> jwtData = jsonDecode(decoded);
-        
+
         // Create user from JWT data
         _currentUser = User(
           id: jwtData['user_id'],
@@ -154,14 +171,15 @@ class AuthService extends ChangeNotifier {
           role: jwtData['role'],
           createdAt: DateTime.now(), // We don't have this from the token
         );
-        
         await _saveUserToPrefs();
         return {'success': true};
       }
     } catch (e) {
-      print('Error parsing JWT: $e');
+      if (kDebugMode) {
+        print('Error parsing JWT: $e');
+      }
     }
-    
+
     // If we reach here, something went wrong
     _token = null;
     return {'success': false, 'message': 'Failed to get user data'};

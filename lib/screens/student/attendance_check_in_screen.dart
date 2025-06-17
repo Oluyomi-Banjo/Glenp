@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:camera/camera.dart';
 import 'package:provider/provider.dart';
 import 'package:attendance_app/models/course.dart';
@@ -8,6 +9,7 @@ import 'package:attendance_app/models/attendance_session.dart';
 import 'package:attendance_app/services/auth_service.dart';
 import 'package:attendance_app/services/face_detection_service.dart';
 import 'package:attendance_app/utils/constants.dart';
+import 'package:attendance_app/utils/permission_utils.dart';
 
 enum CheckInStep {
   initial,
@@ -28,27 +30,29 @@ class AttendanceCheckInScreen extends StatefulWidget {
   });
 
   @override
-  State<AttendanceCheckInScreen> createState() => _AttendanceCheckInScreenState();
+  State<AttendanceCheckInScreen> createState() =>
+      _AttendanceCheckInScreenState();
 }
 
-class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen> with WidgetsBindingObserver {
+class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen>
+    with WidgetsBindingObserver {
   late FaceDetectionService _faceService;
   bool _isCameraInitialized = false;
   bool _isProcessing = false;
   String? _errorMessage;
   String _statusMessage = 'Preparing camera...';
-    CheckInStep _currentStep = CheckInStep.initial;
+  CheckInStep _currentStep = CheckInStep.initial;
   String _livenessAction = '';
   int _livenessAttemptsRemaining = 3;
-  int _countdownSeconds = 0;  Timer? _countdownTimer;
+  int _countdownSeconds = 0;
+  Timer? _countdownTimer;
   bool _livenessCheckPassed = false;
-  
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _faceService = FaceDetectionService();
-    _initializeCamera();
+    _checkAndInitializeCamera();
   }
 
   @override
@@ -61,7 +65,13 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen> with 
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (!_isCameraInitialized) return;
+    // If camera not initialized but returning from settings, check permissions again
+    if (!_isCameraInitialized) {
+      if (state == AppLifecycleState.resumed) {
+        _checkAndInitializeCamera();
+      }
+      return;
+    }
 
     if (state == AppLifecycleState.inactive) {
       _faceService.cameraController?.dispose();
@@ -70,25 +80,98 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen> with 
     }
   }
 
+  Future<void> _checkAndInitializeCamera() async {
+    if (!mounted) return;
+
+    setState(() {
+      _errorMessage = null;
+      _statusMessage = 'Checking camera permission...';
+    });
+
+    try {
+      // Check camera and photos permissions using the utility
+      final permissionResult =
+          await PermissionUtils.checkCameraAndPhotosPermissions(context);
+
+      if (permissionResult == true) {
+        // Permissions granted, initialize camera
+        await _initializeCamera();
+      } else if (permissionResult == false) {
+        // Permissions permanently denied, show settings dialog
+        if (mounted) {
+          setState(() {
+            _errorMessage =
+                'Camera permission is required for attendance check-in';
+            _statusMessage = 'Camera access denied';
+            _currentStep = CheckInStep.failed;
+          });
+
+          await PermissionUtils.showPermissionSettingsDialog(context,
+              content:
+                  'This app needs camera access to verify your attendance. Please grant camera permission in settings.');
+        }
+      } else {
+        // Permission denied but not permanently
+        if (mounted) {
+          setState(() {
+            _errorMessage =
+                'Camera permission is required for attendance check-in';
+            _statusMessage = 'Camera access denied';
+            _currentStep = CheckInStep.failed;
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _errorMessage = 'Error checking permissions: $e';
+          _statusMessage = 'Permission error';
+          _currentStep = CheckInStep.failed;
+        });
+      }
+      if (kDebugMode) {
+        print('Error checking permissions: $e');
+      }
+    }
+  }
+
   Future<void> _initializeCamera() async {
+    if (!mounted) return;
+
+    setState(() {
+      _statusMessage = 'Initializing camera...';
+      _errorMessage = null;
+    });
+
     try {
       await _faceService.initializeCamera();
       if (mounted) {
         setState(() {
           _isCameraInitialized = true;
           _currentStep = CheckInStep.initial;
+          _statusMessage = 'Ready for attendance check-in';
         });
+
+        if (kDebugMode) {
+          print('Camera initialized successfully');
+        }
       }
     } catch (e) {
       if (mounted) {
         setState(() {
+          _isCameraInitialized = false;
           _errorMessage = 'Failed to initialize camera: $e';
           _currentStep = CheckInStep.failed;
+          _statusMessage = 'Camera error';
         });
+      }
+
+      if (kDebugMode) {
+        print('Error initializing camera: $e');
       }
     }
   }
-  
+
   void _startLivenessDetection() {
     setState(() {
       _currentStep = CheckInStep.livenessDetection;
@@ -97,15 +180,16 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen> with 
       _countdownSeconds = AppConstants.livenessCheckDuration;
       _statusMessage = 'Please $_livenessAction';
     });
-    
+
     _startCountdown();
   }
-  
+
   String _getRandomLivenessAction() {
     final random = Random();
-    return AppConstants.livenessActions[random.nextInt(AppConstants.livenessActions.length)];
+    return AppConstants
+        .livenessActions[random.nextInt(AppConstants.livenessActions.length)];
   }
-  
+
   void _startCountdown() {
     _countdownTimer?.cancel();
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
@@ -119,46 +203,48 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen> with 
       }
     });
   }
-  
+
   Future<void> _performLivenessCheck() async {
     if (_isProcessing) return;
-    
+
     setState(() {
       _isProcessing = true;
       _statusMessage = 'Verifying...';
     });
-    
+
     try {
       // Capture image
       final imageBytes = await _faceService.captureImage();
-      
+
       if (imageBytes == null) {
         _handleLivenessFailure('Failed to capture image');
         return;
       }
-      
       // Convert to base64
       final base64Image = _faceService.imageToBase64(imageBytes);
-      
-      // Perform liveness check
+
+      // Get auth token before async gap
       final authService = Provider.of<AuthService>(context, listen: false);
-      if (authService.token == null) {
+      final authToken = authService.token;
+
+      // Perform liveness check
+      if (authToken == null) {
         _handleLivenessFailure('You are not authenticated');
         return;
       }
-      
+
       final result = await _faceService.performLivenessCheck(
-        authService.token!,
+        authToken,
         base64Image,
         widget.course.id,
       );
-      
+
       if (result['success']) {
         setState(() {
           _livenessCheckPassed = true;
           _statusMessage = 'Liveness check passed!';
         });
-        
+
         // Wait a moment before proceeding to face recognition
         Future.delayed(const Duration(seconds: 1), () {
           if (mounted) {
@@ -176,12 +262,12 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen> with 
       });
     }
   }
-  
+
   void _handleLivenessFailure(String message) {
     setState(() {
       _livenessAttemptsRemaining--;
       _errorMessage = message;
-      
+
       if (_livenessAttemptsRemaining > 0) {
         _statusMessage = 'Try again. Please $_livenessAction';
         _countdownSeconds = AppConstants.livenessCheckDuration;
@@ -192,14 +278,14 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen> with 
       }
     });
   }
-  
+
   void _proceedToFaceRecognition() {
     setState(() {
       _currentStep = CheckInStep.faceRecognition;
       _statusMessage = 'Position your face for recognition';
       _errorMessage = null;
     });
-    
+
     // Wait a moment then perform face recognition
     Future.delayed(const Duration(seconds: 1), () {
       if (mounted) {
@@ -207,9 +293,10 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen> with 
       }
     });
   }
-    Future<void> _performFaceRecognition() async {
+
+  Future<void> _performFaceRecognition() async {
     if (_isProcessing) return;
-    
+
     // Check if liveness check has been passed
     if (!_livenessCheckPassed) {
       setState(() {
@@ -219,16 +306,16 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen> with 
       });
       return;
     }
-    
+
     setState(() {
       _isProcessing = true;
       _statusMessage = 'Recognizing face...';
     });
-    
+
     try {
       // Capture image
       final imageBytes = await _faceService.captureImage();
-      
+
       if (imageBytes == null) {
         setState(() {
           _errorMessage = 'Failed to capture image';
@@ -238,13 +325,15 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen> with 
         });
         return;
       }
-      
       // Convert to base64
       final base64Image = _faceService.imageToBase64(imageBytes);
-      
-      // Perform face recognition
+
+      // Get auth token before async gap
       final authService = Provider.of<AuthService>(context, listen: false);
-      if (authService.token == null) {
+      final authToken = authService.token;
+
+      // Perform face recognition
+      if (authToken == null) {
         setState(() {
           _errorMessage = 'You are not authenticated';
           _currentStep = CheckInStep.failed;
@@ -253,17 +342,18 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen> with 
         });
         return;
       }
-      
+
       final result = await _faceService.checkInWithFace(
         authService.token!,
         base64Image,
         widget.course.id,
       );
-      
+
       if (result['success']) {
         setState(() {
           _currentStep = CheckInStep.completed;
-          _statusMessage = result['message'] ?? 'Attendance recorded successfully!';
+          _statusMessage =
+              result['message'] ?? 'Attendance recorded successfully!';
         });
       } else {
         setState(() {
@@ -337,7 +427,7 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen> with 
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-                
+
                 // Error message
                 if (_errorMessage != null)
                   Padding(
@@ -348,9 +438,9 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen> with 
                       style: const TextStyle(color: Colors.red),
                     ),
                   ),
-                
+
                 const SizedBox(height: 16),
-                
+
                 // Action button
                 _buildActionButton(),
               ],
@@ -360,41 +450,41 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen> with 
       ),
     );
   }
-  
+
   Widget _buildMainContent() {
     switch (_currentStep) {
       case CheckInStep.initial:
-        return Center(
+        return const Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(
+              Icon(
                 Icons.face,
                 size: 64,
                 color: Colors.blue,
               ),
-              const SizedBox(height: 16),
-              const Text(
+              SizedBox(height: 16),
+              Text(
                 'Ready for Attendance Check-in',
                 style: TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.bold,
                 ),
               ),
-              const SizedBox(height: 8),
-              const Text(
+              SizedBox(height: 8),
+              Text(
                 'You will need to complete a liveness check\nfollowed by face recognition.',
                 textAlign: TextAlign.center,
               ),
             ],
           ),
         );
-        
+
       case CheckInStep.livenessDetection:
         if (!_isCameraInitialized) {
           return const Center(child: CircularProgressIndicator());
         }
-        
+
         return Stack(
           alignment: Alignment.center,
           children: [
@@ -406,7 +496,7 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen> with 
                 child: CameraPreview(_faceService.cameraController!),
               ),
             ),
-            
+
             // Liveness instruction
             Positioned(
               top: 16,
@@ -447,7 +537,7 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen> with 
                 ),
               ),
             ),
-            
+
             // Processing indicator
             if (_isProcessing)
               Container(
@@ -460,12 +550,12 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen> with 
               ),
           ],
         );
-        
+
       case CheckInStep.faceRecognition:
         if (!_isCameraInitialized) {
           return const Center(child: CircularProgressIndicator());
         }
-        
+
         return Stack(
           alignment: Alignment.center,
           children: [
@@ -477,7 +567,7 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen> with 
                 child: CameraPreview(_faceService.cameraController!),
               ),
             ),
-            
+
             // Face guide
             Positioned.fill(
               child: Center(
@@ -494,7 +584,7 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen> with 
                 ),
               ),
             ),
-            
+
             // Processing indicator
             if (_isProcessing)
               Container(
@@ -507,7 +597,7 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen> with 
               ),
           ],
         );
-        
+
       case CheckInStep.completed:
         return Center(
           child: Column(
@@ -535,7 +625,7 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen> with 
             ],
           ),
         );
-        
+
       case CheckInStep.failed:
         return Center(
           child: Column(
@@ -565,7 +655,7 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen> with 
         );
     }
   }
-  
+
   Widget _buildActionButton() {
     switch (_currentStep) {
       case CheckInStep.initial:
@@ -577,15 +667,15 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen> with 
           ),
           child: const Text('Start Check-in'),
         );
-        
+
       case CheckInStep.livenessDetection:
         // No button during liveness detection
         return const SizedBox.shrink();
-        
+
       case CheckInStep.faceRecognition:
         // No button during face recognition
         return const SizedBox.shrink();
-        
+
       case CheckInStep.completed:
         return ElevatedButton(
           onPressed: () => Navigator.pop(context),
@@ -595,7 +685,7 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen> with 
           ),
           child: const Text('Return to Course'),
         );
-        
+
       case CheckInStep.failed:
         return Row(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -605,7 +695,8 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen> with 
               child: const Text('Cancel'),
             ),
             ElevatedButton(
-              onPressed: () {                setState(() {
+              onPressed: () {
+                setState(() {
                   _currentStep = CheckInStep.initial;
                   _errorMessage = null;
                   _statusMessage = 'Ready for check-in';
@@ -618,7 +709,8 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen> with 
               ),
               child: const Text('Try Again'),
             ),
-          ],        );
+          ],
+        );
     }
   }
 }

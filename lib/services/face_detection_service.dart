@@ -223,7 +223,7 @@ class FaceDetectionService {
   }
 
   InputImage _createIOSInputImage(CameraImage image) {
-    final inputImageFormat = InputImageFormat.bgra8888;
+    const inputImageFormat = InputImageFormat.bgra8888;
 
     final inputImageData = InputImageMetadata(
       size: Size(image.width.toDouble(), image.height.toDouble()),
@@ -239,7 +239,7 @@ class FaceDetectionService {
   }
 
   InputImage _createAndroidInputImage(CameraImage image) {
-    final inputImageFormat = InputImageFormat.nv21;
+    const inputImageFormat = InputImageFormat.nv21;
 
     final inputImageData = InputImageMetadata(
       size: Size(image.width.toDouble(), image.height.toDouble()),

@@ -3,10 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:camera/camera.dart';
 import 'package:provider/provider.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:attendance_app/models/course.dart';
 import 'package:attendance_app/services/auth_service.dart';
 import 'package:attendance_app/services/face_detection_service.dart';
+import 'package:attendance_app/utils/permission_utils.dart';
 
 class FaceEnrollmentScreen extends StatefulWidget {
   final Course course;
@@ -28,7 +28,6 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen>
   bool _isEnrolled = false;
   String? _errorMessage;
   String _statusMessage = 'Position your face in the frame';
-
   @override
   void initState() {
     super.initState();
@@ -36,7 +35,7 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen>
     _faceService = FaceDetectionService();
     // Use post-frame callback to initialize camera after the widget is built
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _initializeCamera();
+      _checkAndInitializeCamera();
     });
   }
 
@@ -50,7 +49,13 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // App state changed before we got the chance to initialize the camera
-    if (!_isCameraInitialized) return;
+    if (!_isCameraInitialized) {
+      // If returning from settings (resumed state), try initializing camera again
+      if (state == AppLifecycleState.resumed) {
+        _checkAndInitializeCamera();
+      }
+      return;
+    }
 
     // Handle app lifecycle changes to properly manage camera resources
     if (state == AppLifecycleState.inactive ||
@@ -58,6 +63,57 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen>
       _faceService.dispose();
     } else if (state == AppLifecycleState.resumed) {
       _initializeCamera();
+    }
+  }
+
+  // New method to check permission status first before initializing
+  Future<void> _checkAndInitializeCamera() async {
+    if (!mounted) return;
+
+    setState(() {
+      _errorMessage = null;
+      _statusMessage = 'Checking camera permission...';
+    });
+
+    try {
+      // Check camera and photos permissions using the utility
+      final permissionResult =
+          await PermissionUtils.checkCameraAndPhotosPermissions(context);
+
+      if (permissionResult == true) {
+        // Permissions granted, initialize camera
+        await _initializeCamera();
+      } else if (permissionResult == false) {
+        // Permissions permanently denied, show settings dialog
+        if (mounted) {
+          setState(() {
+            _errorMessage = 'Camera permission is required for face enrollment';
+            _statusMessage = 'Camera access denied';
+          });
+
+          await PermissionUtils.showPermissionSettingsDialog(context,
+              content:
+                  'This app needs camera access to enroll your face for attendance. Please grant camera permission in settings.');
+        }
+      } else {
+        // Permission denied but not permanently
+        if (mounted) {
+          setState(() {
+            _errorMessage = 'Camera permission is required for face enrollment';
+            _statusMessage = 'Camera access denied';
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _errorMessage = 'Error checking permissions: $e';
+          _statusMessage = 'Permission error';
+        });
+      }
+      if (kDebugMode) {
+        print('Error checking permissions: $e');
+      }
     }
   }
 
@@ -70,60 +126,7 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen>
     });
 
     try {
-      if (kDebugMode) {
-        print('Requesting camera permission...');
-      }
-
-      // Request camera permission
-      final status = await Permission.camera.request();
-      if (kDebugMode) {
-        print('Camera permission status: $status');
-      }
-
-      if (status != PermissionStatus.granted) {
-        if (mounted) {
-          setState(() {
-            _errorMessage = 'Camera permission is required for face enrollment';
-            _statusMessage = 'Camera access denied';
-          });
-        }
-
-        // Try to open app settings if permission denied
-        if (status == PermissionStatus.denied ||
-            status == PermissionStatus.permanentlyDenied) {
-          if (kDebugMode) {
-            print('Camera permission denied or permanently denied');
-          }
-
-          final shouldOpenSettings = await showDialog<bool>(
-                context: context,
-                builder: (context) => AlertDialog(
-                  title: const Text('Camera Permission Required'),
-                  content: const Text(
-                      'This app needs camera access to enroll your face for attendance. Please grant camera permission in settings.'),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.of(context).pop(false),
-                      child: const Text('Cancel'),
-                    ),
-                    TextButton(
-                      onPressed: () => Navigator.of(context).pop(true),
-                      child: const Text('Open Settings'),
-                    ),
-                  ],
-                ),
-              ) ??
-              false;
-
-          if (shouldOpenSettings) {
-            if (kDebugMode) {
-              print('Opening app settings...');
-            }
-            await openAppSettings();
-          }
-        }
-        return;
-      } // Initialize camera
+      // Initialize camera
       if (kDebugMode) {
         print('Initializing camera through face service...');
       }
@@ -145,6 +148,9 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen>
           _errorMessage = 'Failed to initialize camera: $e';
           _statusMessage = 'Camera error';
         });
+      }
+      if (kDebugMode) {
+        print('Error initializing camera: $e');
       }
     }
   }
@@ -169,14 +175,15 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen>
           _statusMessage = 'Capture failed';
         });
         return;
-      }
-
-      // Convert to base64
+      } // Convert to base64
       final base64Image = _faceService.imageToBase64(imageBytes);
 
-      // Enroll face
+      // Get auth service before async gap
       final authService = Provider.of<AuthService>(context, listen: false);
-      if (authService.token == null) {
+      final authToken = authService.token;
+
+      // Check if user is authenticated
+      if (authToken == null) {
         setState(() {
           _errorMessage = 'You are not authenticated';
           _isProcessing = false;
@@ -186,7 +193,7 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen>
       }
 
       final result = await _faceService.enrollFace(
-        authService.token!,
+        authToken,
         base64Image,
         widget.course.id,
       );

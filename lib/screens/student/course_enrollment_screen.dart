@@ -15,10 +15,12 @@ class _CourseEnrollmentScreenState extends State<CourseEnrollmentScreen> {
   final _formKey = GlobalKey<FormState>();
   final _courseIdController = TextEditingController();
   final _passKeyController = TextEditingController();
+  final _courseCodeSearchController = TextEditingController();
   bool _isLoading = false;
   String? _errorMessage;
   String? _successMessage;
   List<Map<String, dynamic>> _availableCourses = [];
+
   @override
   void initState() {
     super.initState();
@@ -32,6 +34,7 @@ class _CourseEnrollmentScreenState extends State<CourseEnrollmentScreen> {
   void dispose() {
     _courseIdController.dispose();
     _passKeyController.dispose();
+    _courseCodeSearchController.dispose();
     super.dispose();
   }
 
@@ -46,7 +49,12 @@ class _CourseEnrollmentScreenState extends State<CourseEnrollmentScreen> {
       final courseService = Provider.of<CourseService>(context, listen: false);
 
       if (authService.token != null) {
-        await courseService.fetchCourses(authService.token!);
+        // For now, just use the regular fetch courses method
+        // In a production app, this would use a separate API endpoint
+        await courseService.fetchCourses(
+          authService.token!,
+          search: _courseCodeSearchController.text,
+        );
 
         // Update state with new data
         setState(() {
@@ -143,56 +151,80 @@ class _CourseEnrollmentScreenState extends State<CourseEnrollmentScreen> {
           ),
           const SizedBox(height: 8),
           const Text(
-            'Enter the course ID and passkey provided by your educator to enroll in a course.',
+            'Search for available courses or enter course details manually.',
             style: TextStyle(
+              fontSize: 16,
               color: Colors.grey,
             ),
           ),
           const SizedBox(height: 24),
 
-          // Available Courses
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Available Courses',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
+          // Course Code Search
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade100,
+              borderRadius: BorderRadius.circular(AppConstants.borderRadius),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Search by Course Code',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
                   ),
-                  const SizedBox(height: 8),
-                  _isLoading
-                      ? const Center(child: CircularProgressIndicator())
-                      : _availableCourses.isEmpty
-                          ? const Text('No courses available')
-                          : ListView.builder(
-                              shrinkWrap: true,
-                              physics: const NeverScrollableScrollPhysics(),
-                              itemCount: _availableCourses.length,
-                              itemBuilder: (context, index) {
-                                final course = _availableCourses[index];
-                                return ListTile(
-                                  title: Text(
-                                      '${course['name']} (${course['code']})'),
-                                  subtitle: Text('Course ID: ${course['id']}'),
-                                  onTap: () {
-                                    setState(() {
-                                      _courseIdController.text =
-                                          course['id'].toString();
-                                    });
-                                  },
-                                );
-                              },
-                            ),
-                ],
-              ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _courseCodeSearchController,
+                        decoration: const InputDecoration(
+                          labelText: 'Course Code',
+                          hintText: 'e.g. CS101',
+                          prefixIcon: Icon(Icons.search),
+                        ),
+                        onSubmitted: (_) => _loadAvailableCourses(),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    ElevatedButton(
+                      onPressed: _isLoading ? null : _loadAvailableCourses,
+                      child: _isLoading
+                          ? const SizedBox(
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                              ),
+                            )
+                          : const Text('Search'),
+                    ),
+                  ],
+                ),
+              ],
             ),
           ),
           const SizedBox(height: 24),
+
+          // Available Courses List
+          if (_availableCourses.isNotEmpty) ...[
+            const Text(
+              'Available Courses',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 16),
+            ..._availableCourses.map((course) => _buildCourseCard(course)),
+            const SizedBox(height: 16),
+            const Divider(),
+            const SizedBox(height: 16),
+          ],
 
           // Enrollment Form
           Form(
@@ -200,6 +232,23 @@ class _CourseEnrollmentScreenState extends State<CourseEnrollmentScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                const Text(
+                  'Manual Enrollment',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Enter the course ID and passkey provided by your professor.',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.grey,
+                  ),
+                ),
+                const SizedBox(height: 16),
+
                 // Course ID Field
                 TextFormField(
                   controller: _courseIdController,
@@ -240,7 +289,7 @@ class _CourseEnrollmentScreenState extends State<CourseEnrollmentScreen> {
                 if (_errorMessage != null)
                   Container(
                     padding: const EdgeInsets.all(8),
-                    color: Colors.red.withAlpha(26), // 0.1 * 255 = ~26
+                    color: Colors.red.withAlpha(26), // 0.1 opacity = ~26 alpha
                     child: Row(
                       children: [
                         const Icon(Icons.error, color: Colors.red),
@@ -259,7 +308,8 @@ class _CourseEnrollmentScreenState extends State<CourseEnrollmentScreen> {
                 if (_successMessage != null)
                   Container(
                     padding: const EdgeInsets.all(8),
-                    color: Colors.green.withAlpha(26), // 0.1 * 255 = ~26
+                    color:
+                        Colors.green.withAlpha(26), // 0.1 opacity = ~26 alpha
                     child: Row(
                       children: [
                         const Icon(Icons.check_circle, color: Colors.green),
@@ -277,20 +327,56 @@ class _CourseEnrollmentScreenState extends State<CourseEnrollmentScreen> {
                 const SizedBox(height: 24),
 
                 // Enroll Button
-                ElevatedButton(
-                  onPressed: _isLoading ? null : _enrollInCourse,
-                  child: _isLoading
-                      ? const SizedBox(
-                          height: 20,
-                          width: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('Enroll in Course'),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: _isLoading ? null : _enrollInCourse,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      child: _isLoading
+                          ? const SizedBox(
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                              ),
+                            )
+                          : const Text('Enroll in Course'),
+                    ),
+                  ),
                 ),
               ],
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildCourseCard(Map<String, dynamic> course) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: ListTile(
+        title: Text(
+          course['name'],
+          style: const TextStyle(
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        subtitle: Text('Course Code: ${course['code']}'),
+        trailing: IconButton(
+          icon: const Icon(Icons.add_circle_outline),
+          onPressed: () {
+            setState(() {
+              _courseIdController.text = course['id'].toString();
+              // Focus on the passkey field next
+              FocusScope.of(context).requestFocus(
+                FocusNode(),
+              );
+            });
+          },
+          tooltip: 'Use this course',
+        ),
       ),
     );
   }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 import 'package:attendance_app/models/course.dart';
 import 'package:attendance_app/services/auth_service.dart';
@@ -17,7 +18,7 @@ class StudentHomeScreen extends StatefulWidget {
 class _StudentHomeScreenState extends State<StudentHomeScreen> {
   final _searchController = TextEditingController();
   bool _isSearching = false;
-    @override
+  @override
   void initState() {
     super.initState();
     // Use post-frame callback to load courses after the initial build
@@ -25,19 +26,29 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> {
       _loadCourses();
     });
   }
-  
+
   @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
   }
-    Future<void> _loadCourses({String? search}) async {
+
+  Future<void> _loadCourses({String? search}) async {
     final authService = Provider.of<AuthService>(context, listen: false);
     final courseService = Provider.of<CourseService>(context, listen: false);
-    
+
     try {
       if (authService.token != null) {
-        await courseService.fetchCourses(authService.token!, search: search);
+        // First check if the user is a student, and if so, use the filter approach
+        if (authService.currentUser?.role == 'student') {
+          if (kDebugMode) {
+            print('Loading enrolled courses for student...');
+          }
+          // In production, this would call fetchEnrolledCourses when the backend supports it
+          await courseService.fetchCourses(authService.token!, search: search);
+        } else {
+          await courseService.fetchCourses(authService.token!, search: search);
+        }
       }
     } catch (e) {
       // Show error using a snackbar if there's an exception
@@ -48,7 +59,7 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> {
       }
     }
   }
-  
+
   void _toggleSearch() {
     setState(() {
       _isSearching = !_isSearching;
@@ -58,11 +69,11 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> {
       }
     });
   }
-  
+
   void _performSearch() {
     _loadCourses(search: _searchController.text);
   }
-  
+
   void _navigateToCourseDetail(Course course) {
     Navigator.push(
       context,
@@ -71,7 +82,7 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> {
       ),
     );
   }
-  
+
   void _showEnrollDialog() {
     Navigator.push(
       context,
@@ -80,14 +91,15 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> {
       ),
     );
   }
-  
+
   @override
   Widget build(BuildContext context) {
     final authService = Provider.of<AuthService>(context);
     final courseService = Provider.of<CourseService>(context);
     final user = authService.currentUser;
-    
-    return Scaffold(      appBar: AppBar(
+
+    return Scaffold(
+      appBar: AppBar(
         title: _isSearching
             ? Material(
                 type: MaterialType.transparency,
@@ -148,7 +160,8 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> {
             const Divider(),
             ListTile(
               leading: const Icon(Icons.logout),
-              title: const Text('Logout'),              onTap: () async {
+              title: const Text('Logout'),
+              onTap: () async {
                 final navigator = Navigator.of(context);
                 await authService.logout();
                 if (!mounted) return;
@@ -211,8 +224,10 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> {
                         ),
                       )
                     : GridView.builder(
-                        padding: const EdgeInsets.all(AppConstants.defaultPadding),
-                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                        padding:
+                            const EdgeInsets.all(AppConstants.defaultPadding),
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: 2,
                           crossAxisSpacing: 16,
                           mainAxisSpacing: 16,
