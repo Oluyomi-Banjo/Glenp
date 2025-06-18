@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -12,21 +11,29 @@ class LivenessDetectionManager {
   final FaceDetector _faceDetector;
   final CameraController cameraController;
 
+  // Stream controller for processing frames
+  StreamController<CameraImage>? _streamController;
+  StreamSubscription<CameraImage>? _streamSubscription;
+  
   // History of face detections for analysis
   final List<Face?> _faceHistory = [];
-  final int _maxHistorySize = 15; // Store 15 frames for analysis
+  final int _maxHistorySize = 20; // Store 20 frames for analysis
 
   // Action detection flags
   bool _isProcessingFrames = false;
   bool _actionDetected = false;
   LivenessAction? _currentAction;
-  Completer<bool> _detectionCompleter = Completer<bool>();
+  Completer<bool>? _detectionCompleter;
 
   // Confidence thresholds for action detection
-  static const double _blinkThreshold = 0.1; // Eye open probability threshold
-  static const double _turnThreshold =
-      20.0; // Head rotation threshold in degrees
+  static const double _blinkThreshold = 0.2; // Eye open probability threshold
+  static const double _turnThreshold = 20.0; // Head rotation threshold in degrees
   static const double _smileThreshold = 0.7; // Smile probability threshold
+  static const double _nodThreshold = 10.0; // Head vertical movement threshold
+  
+  // Frame processing configuration
+  static const int _processingInterval = 3; // Process every 3rd frame
+  int _frameCount = 0;
 
   LivenessDetectionManager({
     required this.cameraController,
@@ -44,377 +51,386 @@ class LivenessDetectionManager {
     _actionDetected = false;
     _currentAction = action;
     _faceHistory.clear();
+    _frameCount = 0;
 
-    // Reset completer
-    if (_detectionCompleter.isCompleted) {
-      _detectionCompleter = Completer<bool>();
-    }
+    // Create a new completer
+    _detectionCompleter = Completer<bool>();
 
-    // Set timeout for action detection
+    // Start processing frames
+    await _startFrameProcessing();
+    
+    // Set timeout
     Timer(Duration(seconds: durationSeconds), () {
-      if (!_detectionCompleter.isCompleted) {
-        _detectionCompleter.complete(_actionDetected);
+      if (_detectionCompleter != null && !_detectionCompleter!.isCompleted) {
+        _stopFrameProcessing();
+        _detectionCompleter!.complete(_actionDetected);
       }
     });
 
-    // Start processing camera frames
-    _startFrameProcessing();
-
     // Wait for result
-    return _detectionCompleter.future;
+    return await _detectionCompleter!.future;
   }
 
-  /// Stop the liveness detection
-  void stopDetection() {
-    _isProcessingFrames = false;
-    if (!_detectionCompleter.isCompleted) {
-      _detectionCompleter.complete(_actionDetected);
-    }
-  }
-
-  /// Process camera frames for liveness detection
-  void _startFrameProcessing() async {
-    if (!_isProcessingFrames ||
-        _actionDetected ||
-        cameraController.value.isStreamingImages) {
-      return;
-    }
-
+  /// Start processing frames from camera
+  Future<void> _startFrameProcessing() async {
     try {
-      await cameraController.startImageStream((CameraImage image) async {
-        if (!_isProcessingFrames || _actionDetected) {
-          cameraController.stopImageStream();
-          return;
-        }
-
-        // Process the image to detect faces
-        try {
-          final inputImage = _convertCameraImageToInputImage(image);
-          if (inputImage != null) {
-            final faces = await _faceDetector.processImage(inputImage);
-
-            // If a face is detected, add it to history
-            if (faces.isNotEmpty) {
-              final face = faces.first;
-              _addFaceToHistory(face);
-
-              // Check if the current action is detected
-              final actionDetected = await _checkActionDetected();
-              if (actionDetected && !_detectionCompleter.isCompleted) {
-                _actionDetected = true;
-                cameraController.stopImageStream();
-                _detectionCompleter.complete(true);
-              }
-            }
-          }
-        } catch (e) {
-          if (kDebugMode) {
-            print('Error processing frame: $e');
-          }
+      _streamController = StreamController<CameraImage>();
+      
+      // Start camera image stream
+      await cameraController.startImageStream((image) {
+        if (_streamController != null && !_streamController!.isClosed) {
+          _streamController!.add(image);
         }
       });
+      
+      // Process the stream
+      _streamSubscription = _streamController!.stream.listen(_processFrame);
+      
     } catch (e) {
-      if (kDebugMode) {
-        print('Error starting camera stream: $e');
-      }
-      if (!_detectionCompleter.isCompleted) {
-        _detectionCompleter.complete(false);
+      debugPrint('Error starting frame processing: $e');
+      if (_detectionCompleter != null && !_detectionCompleter!.isCompleted) {
+        _detectionCompleter!.complete(false);
       }
     }
   }
 
-  /// Add a face to the history list
-  void _addFaceToHistory(Face face) {
-    _faceHistory.add(face);
-    if (_faceHistory.length > _maxHistorySize) {
-      _faceHistory.removeAt(0);
+  /// Stop processing frames
+  void _stopFrameProcessing() {
+    try {
+      _streamSubscription?.cancel();
+      _streamController?.close();
+      cameraController.stopImageStream();
+    } catch (e) {
+      debugPrint('Error stopping frame processing: $e');
+    } finally {
+      _isProcessingFrames = false;
     }
   }
 
-  /// Check if the current action has been detected
-  Future<bool> _checkActionDetected() async {
-    if (_faceHistory.length < 5) {
-      return false; // Need at least 5 frames for analysis
+  /// Process a single camera frame
+  Future<void> _processFrame(CameraImage cameraImage) async {
+    // Process only every Nth frame to reduce CPU usage
+    if (_frameCount++ % _processingInterval != 0) {
+      return;
     }
+    
+    if (_isProcessingFrames && !_actionDetected) {
+      try {
+        // Convert CameraImage to InputImage
+        final inputImage = _convertCameraImageToInputImage(cameraImage);
+        if (inputImage == null) return;
+        
+        // Process the image with the face detector
+        final faces = await _faceDetector.processImage(inputImage);
+        
+        // We only care about the most prominent face
+        final face = faces.isNotEmpty ? faces.first : null;
+        
+        // Add to history
+        _faceHistory.add(face);
+        if (_faceHistory.length > _maxHistorySize) {
+          _faceHistory.removeAt(0); // Remove oldest entry
+        }
+        
+        // Check if we have enough frames to analyze
+        if (_faceHistory.length >= 10 && _currentAction != null) {
+          // Check for the specific action
+          _checkForAction(_currentAction!);
+        }
+        
+      } catch (e) {
+        debugPrint('Error processing frame: $e');
+      }
+    }
+  }
 
-    switch (_currentAction) {
+  /// Convert CameraImage to InputImage
+  InputImage? _convertCameraImageToInputImage(CameraImage cameraImage) {
+    try {
+      final camera = cameraController.description;
+      final rotation = InputImageRotationValue.fromRawValue(camera.sensorOrientation);
+      if (rotation == null) return null;
+      
+      // Determine image format
+      final format = InputImageFormatValue.fromRawValue(cameraImage.format.raw);
+      if (format == null) return null;
+      
+      // For YUV_420_888 format (common on Android)
+      if (format == InputImageFormat.yuv420) {
+        return InputImage.fromBytes(
+          bytes: _convertYUV420ToBytes(cameraImage),
+          metadata: InputImageMetadata(
+            size: Size(cameraImage.width.toDouble(), cameraImage.height.toDouble()),
+            rotation: rotation,
+            format: format,
+            bytesPerRow: cameraImage.planes[0].bytesPerRow,
+          ),
+        );
+      } 
+      // For other formats like BGRA8888 (common on iOS)
+      else {
+        return InputImage.fromBytes(
+          bytes: cameraImage.planes[0].bytes,
+          metadata: InputImageMetadata(
+            size: Size(cameraImage.width.toDouble(), cameraImage.height.toDouble()),
+            rotation: rotation,
+            format: format,
+            bytesPerRow: cameraImage.planes[0].bytesPerRow,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error converting camera image: $e');
+      return null;
+    }
+  }
+
+  /// Convert YUV_420_888 format to bytes
+  Uint8List _convertYUV420ToBytes(CameraImage image) {
+    // This is a simplified conversion that works for face detection
+    // For production, a more sophisticated conversion might be needed
+    final bytesPerRow = image.planes[0].bytesPerRow;
+    final height = image.height;
+    final bytes = Uint8List(bytesPerRow * height);
+    
+    // Copy Y plane data (luminance)
+    for (int i = 0; i < height; i++) {
+      final byteOffset = i * bytesPerRow;
+      final planeOffset = i * image.planes[0].bytesPerRow;
+      for (int j = 0; j < bytesPerRow && j < image.planes[0].bytesPerRow; j++) {
+        bytes[byteOffset + j] = image.planes[0].bytes[planeOffset + j];
+      }
+    }
+    
+    return bytes;
+  }
+
+  /// Check for the specific action in the face history
+  void _checkForAction(LivenessAction action) {
+    switch (action) {
       case LivenessAction.blink:
-        return _detectBlink();
+        _checkForBlinking();
+        break;
       case LivenessAction.turnLeft:
-        return _detectTurnLeft();
+        _checkForHeadTurn(true); // true = left
+        break;
       case LivenessAction.turnRight:
-        return _detectTurnRight();
+        _checkForHeadTurn(false); // false = right
+        break;
       case LivenessAction.nod:
-        return _detectNod();
+        _checkForNodding();
+        break;
       case LivenessAction.smile:
-        return _detectSmile();
-      default:
-        return false;
+        _checkForSmiling();
+        break;
     }
   }
 
-  /// Detect if the user blinked
-  /// Looks for a sequence of: eyes open -> eyes closed -> eyes open
-  bool _detectBlink() {
-    if (_faceHistory.length < 5) return false;
-
-    // First make sure we have valid eye information
-    bool hasValidEyeInfo = true;
-    for (var face in _faceHistory) {
-      if (face == null ||
-          face.leftEyeOpenProbability == null ||
-          face.rightEyeOpenProbability == null) {
-        hasValidEyeInfo = false;
+  /// Check for blinking pattern: eyes open -> closed -> open
+  void _checkForBlinking() {
+    // Need at least 10 frames
+    if (_faceHistory.length < 10) return;
+    
+    // Check recent frames to detect a blink
+    // We look for a sequence where eyes are open, then closed, then open again
+    bool foundOpenBeforeClosed = false;
+    bool foundClosed = false;
+    bool foundOpenAfterClosed = false;
+    
+    // Check most recent frames first (backward in time)
+    for (int i = _faceHistory.length - 1; i >= 0; i--) {
+      final face = _faceHistory[i];
+      if (face == null) continue;
+      
+      // Skip faces without eye classification probability
+      final leftEyeProb = face.leftEyeOpenProbability;
+      final rightEyeProb = face.rightEyeOpenProbability;
+      
+      if (leftEyeProb == null || rightEyeProb == null || 
+          !leftEyeProb.isFinite || !rightEyeProb.isFinite) {
+        continue;
+      }
+      
+      final eyesOpen = leftEyeProb > _blinkThreshold && 
+                       rightEyeProb > _blinkThreshold;
+      final eyesClosed = leftEyeProb < _blinkThreshold || 
+                         rightEyeProb < _blinkThreshold;
+      
+      if (!foundOpenAfterClosed && eyesOpen) {
+        foundOpenAfterClosed = true;
+      } else if (foundOpenAfterClosed && !foundClosed && eyesClosed) {
+        foundClosed = true;
+      } else if (foundOpenAfterClosed && foundClosed && !foundOpenBeforeClosed && eyesOpen) {
+        foundOpenBeforeClosed = true;
         break;
       }
     }
-
-    if (!hasValidEyeInfo) return false;
-
-    // Look for the blink pattern in the sequence
-    bool foundEyesOpen = false;
-    bool foundEyesClosed = false;
-    bool foundEyesReopened = false;
-
-    for (int i = 0; i < _faceHistory.length; i++) {
-      final face = _faceHistory[i]!;
-      final leftEyeOpen = face.leftEyeOpenProbability! > _blinkThreshold;
-      final rightEyeOpen = face.rightEyeOpenProbability! > _blinkThreshold;
-
-      // Check for eyes open (beginning)
-      if (!foundEyesOpen && leftEyeOpen && rightEyeOpen) {
-        foundEyesOpen = true;
-        continue;
+    
+    if (foundOpenBeforeClosed && foundClosed && foundOpenAfterClosed) {
+      _actionDetected = true;
+      if (_detectionCompleter != null && !_detectionCompleter!.isCompleted) {
+        _stopFrameProcessing();
+        _detectionCompleter!.complete(true);
       }
+    }
+  }
 
-      // Check for eyes closed (middle)
-      if (foundEyesOpen && !foundEyesClosed && !leftEyeOpen && !rightEyeOpen) {
-        foundEyesClosed = true;
-        continue;
-      }
-
-      // Check for eyes reopened (end)
-      if (foundEyesOpen && foundEyesClosed && leftEyeOpen && rightEyeOpen) {
-        foundEyesReopened = true;
+  /// Check for head turn (left or right)
+  void _checkForHeadTurn(bool isLeft) {
+    // Need sufficient frames
+    if (_faceHistory.length < 15) return;
+    
+    // Get the first face in history (oldest) and most recent face
+    Face? startFace = null;
+    Face? currentFace = null;
+    
+    // Find first valid face
+    for (final face in _faceHistory) {
+      if (face != null) {
+        startFace = face;
         break;
       }
     }
-
-    return foundEyesOpen && foundEyesClosed && foundEyesReopened;
-  }
-
-  /// Detect if the user turned their head left
-  bool _detectTurnLeft() {
-    if (_faceHistory.length < 5) return false;
-
-    // Get average initial head position
-    double initialHeadAngle = 0;
-    int count = 0;
-    for (int i = 0; i < 3 && i < _faceHistory.length; i++) {
-      if (_faceHistory[i] != null && _faceHistory[i]!.headEulerAngleY != null) {
-        initialHeadAngle += _faceHistory[i]!.headEulerAngleY!;
-        count++;
+    
+    // Find most recent valid face
+    for (int i = _faceHistory.length - 1; i >= 0; i--) {
+      if (_faceHistory[i] != null) {
+        currentFace = _faceHistory[i];
+        break;
       }
     }
+    
+    if (startFace == null || currentFace == null) return;
+    
+    // Calculate head rotation (headEulerAngleY)
+    // Positive is turn to the right, negative is turn to the left
+    final startAngle = startFace.headEulerAngleY;
+    final currentAngle = currentFace.headEulerAngleY;
+    
+    if (startAngle == null || currentAngle == null || 
+        !startAngle.isFinite || !currentAngle.isFinite) return;
+    
+    // Calculate change in angle
+    final angleChange = currentAngle - startAngle;
+    
+    // Check if angle change exceeds threshold in the correct direction
+    if (isLeft && angleChange < -_turnThreshold) {
+      _actionDetected = true;
+      if (_detectionCompleter != null && !_detectionCompleter!.isCompleted) {
+        _stopFrameProcessing();
+        _detectionCompleter!.complete(true);
+      }
+    } else if (!isLeft && angleChange > _turnThreshold) {
+      _actionDetected = true;
+      if (_detectionCompleter != null && !_detectionCompleter!.isCompleted) {
+        _stopFrameProcessing();
+        _detectionCompleter!.complete(true);
+      }
+    }
+  }
 
-    if (count == 0) return false;
-    initialHeadAngle /= count;
-
-    // Look for significant left turn
-    bool foundTurn = false;
-    for (int i = 3; i < _faceHistory.length; i++) {
-      if (_faceHistory[i] != null && _faceHistory[i]!.headEulerAngleY != null) {
-        // Negative Y angle means turning left
-        if (_faceHistory[i]!.headEulerAngleY! <
-            (initialHeadAngle - _turnThreshold)) {
-          foundTurn = true;
+  /// Check for nodding (head moving up and down)
+  void _checkForNodding() {
+    // Need sufficient frames
+    if (_faceHistory.length < 15) return;
+    
+    // Track head pitch (X angle) changes
+    // Positive is looking down, negative is looking up
+    final headPitches = <double>[];
+    
+    // Collect valid head pitch values
+    for (final face in _faceHistory) {
+      if (face != null) {
+        final pitchAngle = face.headEulerAngleX;
+        if (pitchAngle != null && pitchAngle.isFinite) {
+          headPitches.add(pitchAngle);
+        }
+      }
+    }
+    
+    if (headPitches.length < 10) return;
+    
+    // Calculate min and max to find the range of motion
+    double minPitch = double.infinity;
+    double maxPitch = double.negativeInfinity;
+    
+    for (final pitch in headPitches) {
+      if (pitch < minPitch) minPitch = pitch;
+      if (pitch > maxPitch) maxPitch = pitch;
+    }
+    
+    // Calculate the range of motion
+    final pitchRange = maxPitch - minPitch;
+    
+    // Detect nod if range exceeds threshold
+    if (pitchRange > _nodThreshold) {
+      // Check for at least one direction change (nod requires up-down-up or down-up-down)
+      bool foundDirectionChange = false;
+      
+      for (int i = 2; i < headPitches.length; i++) {
+        final prev2 = headPitches[i-2];
+        final prev1 = headPitches[i-1];
+        final current = headPitches[i];
+        
+        // Check for direction change: up to down or down to up
+        if ((prev2 < prev1 && prev1 > current) || (prev2 > prev1 && prev1 < current)) {
+          foundDirectionChange = true;
           break;
         }
       }
-    }
-
-    return foundTurn;
-  }
-
-  /// Detect if the user turned their head right
-  bool _detectTurnRight() {
-    if (_faceHistory.length < 5) return false;
-
-    // Get average initial head position
-    double initialHeadAngle = 0;
-    int count = 0;
-    for (int i = 0; i < 3 && i < _faceHistory.length; i++) {
-      if (_faceHistory[i] != null && _faceHistory[i]!.headEulerAngleY != null) {
-        initialHeadAngle += _faceHistory[i]!.headEulerAngleY!;
-        count++;
-      }
-    }
-
-    if (count == 0) return false;
-    initialHeadAngle /= count;
-
-    // Look for significant right turn
-    bool foundTurn = false;
-    for (int i = 3; i < _faceHistory.length; i++) {
-      if (_faceHistory[i] != null && _faceHistory[i]!.headEulerAngleY != null) {
-        // Positive Y angle means turning right
-        if (_faceHistory[i]!.headEulerAngleY! >
-            (initialHeadAngle + _turnThreshold)) {
-          foundTurn = true;
-          break;
+      
+      if (foundDirectionChange) {
+        _actionDetected = true;
+        if (_detectionCompleter != null && !_detectionCompleter!.isCompleted) {
+          _stopFrameProcessing();
+          _detectionCompleter!.complete(true);
         }
       }
     }
-
-    return foundTurn;
   }
 
-  /// Detect if the user nodded (head up then down)
-  bool _detectNod() {
-    if (_faceHistory.length < 5) return false;
-
-    // Get average initial head position
-    double initialHeadAngle = 0;
-    int count = 0;
-    for (int i = 0; i < 3 && i < _faceHistory.length; i++) {
-      if (_faceHistory[i] != null && _faceHistory[i]!.headEulerAngleX != null) {
-        initialHeadAngle += _faceHistory[i]!.headEulerAngleX!;
-        count++;
-      }
-    }
-
-    if (count == 0) return false;
-    initialHeadAngle /= count;
-
-    // Look for head going up and then down
-    bool headWentUp = false;
-    bool headWentDown = false;
-
-    for (int i = 3; i < _faceHistory.length; i++) {
-      if (_faceHistory[i] != null && _faceHistory[i]!.headEulerAngleX != null) {
-        // Negative X angle means tilting up
-        if (!headWentUp &&
-            _faceHistory[i]!.headEulerAngleX! <
-                (initialHeadAngle - _turnThreshold)) {
-          headWentUp = true;
-        }
-        // Positive X angle means tilting down
-        else if (headWentUp &&
-            _faceHistory[i]!.headEulerAngleX! >
-                (initialHeadAngle + _turnThreshold)) {
-          headWentDown = true;
-          break;
-        }
-      }
-    }
-
-    return headWentUp && headWentDown;
-  }
-
-  /// Detect if the user smiled
-  bool _detectSmile() {
-    if (_faceHistory.length < 5) return false;
-
-    // First make sure we have valid smile probability information
+  /// Check for smiling
+  void _checkForSmiling() {
+    // Need sufficient frames
+    if (_faceHistory.length < 10) return;
+    
+    // Count frames with smile
+    int framesWithSmile = 0;
     int validFrames = 0;
-    for (var face in _faceHistory) {
-      if (face != null && face.smilingProbability != null) {
-        validFrames++;
+    
+    // Check recent frames
+    for (int i = _faceHistory.length - 10; i < _faceHistory.length; i++) {
+      if (i < 0) continue;
+      
+      final face = _faceHistory[i];
+      if (face == null) continue;
+      
+      final smileProb = face.smilingProbability;
+      if (smileProb == null || !smileProb.isFinite) continue;
+      
+      validFrames++;
+      if (smileProb > _smileThreshold) {
+        framesWithSmile++;
       }
     }
-
-    if (validFrames < 5) return false;
-
-    // Look for significant smile
-    int smilingFrames = 0;
-    for (var face in _faceHistory) {
-      if (face != null &&
-          face.smilingProbability != null &&
-          face.smilingProbability! > _smileThreshold) {
-        smilingFrames++;
+    
+    // If we have enough valid frames and most of them have a smile, detect the action
+    if (validFrames >= 5 && framesWithSmile >= validFrames * 0.7) {
+      _actionDetected = true;
+      if (_detectionCompleter != null && !_detectionCompleter!.isCompleted) {
+        _stopFrameProcessing();
+        _detectionCompleter!.complete(true);
       }
     }
-
-    // Consider it a smile if >50% of valid frames show a smile
-    return smilingFrames > (validFrames / 2);
   }
 
-  /// Convert camera image to input image for ML Kit
-  InputImage? _convertCameraImageToInputImage(CameraImage image) {
-    if (Platform.isIOS) {
-      return _createIOSInputImage(image);
-    } else {
-      return _createAndroidInputImage(image);
-    }
-  }
-
-  /// Create input image for iOS
-  InputImage _createIOSInputImage(CameraImage image) {
-    const inputImageFormat = InputImageFormat.bgra8888;
-
-    final inputImageData = InputImageMetadata(
-      size: Size(image.width.toDouble(), image.height.toDouble()),
-      rotation: InputImageRotation.rotation0deg,
-      format: inputImageFormat,
-      bytesPerRow: image.planes[0].bytesPerRow,
-    );
-
-    return InputImage.fromBytes(
-      bytes: image.planes[0].bytes,
-      metadata: inputImageData,
-    );
-  }
-
-  /// Create input image for Android
-  InputImage _createAndroidInputImage(CameraImage image) {
-    const inputImageFormat = InputImageFormat.nv21;
-
-    final inputImageData = InputImageMetadata(
-      size: Size(image.width.toDouble(), image.height.toDouble()),
-      rotation: InputImageRotation.rotation0deg,
-      format: inputImageFormat,
-      bytesPerRow: image.planes[0].bytesPerRow,
-    );
-
-    // Convert YUV to bytes
-    final bytes = _convertYUV420ToNV21(image);
-
-    return InputImage.fromBytes(
-      bytes: bytes,
-      metadata: inputImageData,
-    );
-  }
-
-  /// Convert YUV_420 to NV21 format for Android
-  Uint8List _convertYUV420ToNV21(CameraImage image) {
-    final int width = image.width;
-    final int height = image.height;
-    final int uvRowStride = image.planes[1].bytesPerRow;
-    final int uvPixelStride = image.planes[1].bytesPerPixel!;
-
-    final Uint8List nv21 = Uint8List(width * height * 3 ~/ 2);
-
-    // Copy Y plane
-    int ySize = width * height;
-    for (int i = 0; i < ySize; i++) {
-      nv21[i] = image.planes[0].bytes[i];
-    }
-
-    // Copy U and V planes
-    int pos = ySize;
-    for (int row = 0; row < height ~/ 2; row++) {
-      for (int col = 0; col < width ~/ 2; col++) {
-        final int uvIndex = col * uvPixelStride + row * uvRowStride;
-        nv21[pos++] = image.planes[1].bytes[uvIndex]; // V
-        nv21[pos++] = image.planes[2].bytes[uvIndex]; // U
-      }
-    }
-
-    return nv21;
-  }
-
-  /// Cleanup resources
+  /// Clean up resources
   void dispose() {
-    stopDetection();
+    _stopFrameProcessing();
+    
+    if (_detectionCompleter != null && !_detectionCompleter!.isCompleted) {
+      _detectionCompleter!.complete(false);
+      _detectionCompleter = null;
+    }
   }
 }

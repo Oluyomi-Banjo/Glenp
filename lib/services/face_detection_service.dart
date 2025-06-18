@@ -12,7 +12,7 @@ import 'package:attendance_app/utils/network_utils.dart';
 import 'package:attendance_app/services/liveness_detection_manager.dart'
     as liveness;
 
-enum LivenessAction { blink, turnLeft, turnRight }
+enum LivenessAction { blink, turnLeft, turnRight, nod, smile }
 
 class FaceDetectionService {
   CameraController? _cameraController;
@@ -350,7 +350,6 @@ class FaceDetectionService {
       };
     }
   }
-
   // Perform real-time liveness check with action detection
   Future<Map<String, dynamic>> performRealTimeLivenessCheck(
       String token, LivenessAction action, int courseId) async {
@@ -369,7 +368,7 @@ class FaceDetectionService {
       }
 
       // Set timeout duration for liveness detection
-      const int livenessCheckDuration = 5; // seconds
+      const int livenessCheckDuration = AppConstants.livenessCheckDuration;
 
       // Map our LivenessAction enum to the library's enum
       final livenessAction = _mapToLivenessManagerAction(action);
@@ -410,7 +409,6 @@ class FaceDetectionService {
       };
     }
   }
-
   // Map our LivenessAction enum to the LivenessDetectionManager's enum
   liveness.LivenessAction _mapToLivenessManagerAction(LivenessAction action) {
     switch (action) {
@@ -420,8 +418,31 @@ class FaceDetectionService {
         return liveness.LivenessAction.turnLeft;
       case LivenessAction.turnRight:
         return liveness.LivenessAction.turnRight;
+      case LivenessAction.nod:
+        return liveness.LivenessAction.nod;
+      case LivenessAction.smile:
+        return liveness.LivenessAction.smile;
       default:
         return liveness.LivenessAction.blink;
     }
+  }
+  // Map text instruction to LivenessAction
+  LivenessAction getLivenessActionFromText(String instruction) {
+    final lowercaseInstruction = instruction.toLowerCase();
+    
+    if (lowercaseInstruction.contains('blink')) {
+      return LivenessAction.blink;
+    } else if (lowercaseInstruction.contains('left')) {
+      return LivenessAction.turnLeft;
+    } else if (lowercaseInstruction.contains('right')) {
+      return LivenessAction.turnRight;
+    } else if (lowercaseInstruction.contains('nod')) {
+      return LivenessAction.nod;
+    } else if (lowercaseInstruction.contains('smile')) {
+      return LivenessAction.smile;
+    }
+    
+    // Default to blink if no match found
+    return LivenessAction.blink;
   }
 }

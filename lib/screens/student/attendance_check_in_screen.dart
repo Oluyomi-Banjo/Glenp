@@ -221,10 +221,13 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen>
       if (authToken == null) {
         _handleLivenessFailure('You are not authenticated');
         return;
-      }
+      }      // Map instruction to liveness action
+      final livenessAction = _faceService.getLivenessActionFromText(_livenessAction);
 
-      // Map instruction to liveness action
-      final livenessAction = _getLivenessActionFromInstruction(_livenessAction);
+      // Show feedback message
+      setState(() {
+        _statusMessage = 'Please follow the instruction on screen';
+      });
 
       // Perform real-time liveness check
       final result = await _faceService.performRealTimeLivenessCheck(
@@ -368,24 +371,8 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen>
       });
     }
   }
-
   // Map instruction text to liveness action
-  LivenessAction _getLivenessActionFromInstruction(String instruction) {
-    instruction = instruction.toLowerCase();
-
-    if (instruction.contains('blink')) {
-      return LivenessAction.blink;
-    } else if (instruction.contains('turn left') ||
-        instruction.contains('look left')) {
-      return LivenessAction.turnLeft;
-    } else if (instruction.contains('turn right') ||
-        instruction.contains('look right')) {
-      return LivenessAction.turnRight;
-    }
-
-    // Default to blink as it's usually the easiest to detect
-    return LivenessAction.blink;
-  }
+  // REMOVED: Using FaceDetectionService.getLivenessActionFromText instead
 
   @override
   Widget build(BuildContext context) {
@@ -795,14 +782,35 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen>
           const SizedBox(width: 8),
           const Icon(Icons.arrow_back, size: 24, color: Colors.blue),
         ],
-      );
-    } else if (action.contains('right')) {
+      );    } else if (action.contains('right')) {
       return Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           const Icon(Icons.face, size: 32, color: Colors.blue),
           const SizedBox(width: 8),
           const Icon(Icons.arrow_forward, size: 24, color: Colors.blue),
+        ],
+      );
+    } else if (action.contains('nod')) {
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.face, size: 32, color: Colors.blue),
+          const SizedBox(width: 8),
+          Column(
+            children: [
+              const Icon(Icons.arrow_upward, size: 16, color: Colors.blue),
+              const SizedBox(height: 2),
+              const Icon(Icons.arrow_downward, size: 16, color: Colors.blue),
+            ],
+          ),
+        ],
+      );
+    } else if (action.contains('smile')) {
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.sentiment_satisfied_alt, size: 32, color: Colors.blue),
         ],
       );
     }
