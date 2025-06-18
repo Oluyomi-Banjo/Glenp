@@ -1,141 +1,80 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:attendance_app/utils/constants.dart';
 import 'package:attendance_app/utils/network_utils.dart';
+import 'package:attendance_app/services/liveness_detection_manager.dart'
+    as liveness;
 
 enum LivenessAction { blink, turnLeft, turnRight }
 
 class FaceDetectionService {
-  late final FaceDetector _faceDetector;
   CameraController? _cameraController;
+  final FaceDetector _faceDetector;
+  liveness.LivenessDetectionManager? _livenessManager;
   bool _isProcessing = false;
 
-  FaceDetectionService() {
-    final options = FaceDetectorOptions(
-      enableContours: true,
-      enableLandmarks: true,
-      enableTracking: true,
-      performanceMode: FaceDetectorMode.accurate,
-    );
-    _faceDetector = FaceDetector(options: options);
-  }
-  Future<void> initializeCamera() async {
-    try {
-      if (kDebugMode) {
-        print('Face detection service: starting camera initialization');
-      }
-
-      // Dispose of any existing controller
-      await _cameraController?.dispose();
-
-      // Get available cameras
-      final cameras = await availableCameras();
-      if (cameras.isEmpty) {
-        if (kDebugMode) {
-          print('No cameras found on device');
-        }
-        throw CameraException(
-            'NoCameraAvailable', 'No cameras found on device.');
-      }
-
-      if (kDebugMode) {
-        print(
-            'Found ${cameras.length} cameras: ${cameras.map((c) => c.name).join(', ')}');
-      }
-
-      // Find front camera
-      final frontCamera = cameras.firstWhere(
-        (camera) => camera.lensDirection == CameraLensDirection.front,
-        orElse: () => cameras.first,
-      );
-
-      if (kDebugMode) {
-        print(
-            'Using camera: ${frontCamera.name} (${frontCamera.lensDirection})');
-      }
-
-      // Create new controller with appropriate settings
-      _cameraController = CameraController(
-        frontCamera,
-        // Use lower resolution on web/iOS for better performance
-        kIsWeb || Platform.isIOS
-            ? ResolutionPreset.medium
-            : ResolutionPreset.high,
-        enableAudio: false,
-        imageFormatGroup: Platform.isIOS
-            ? ImageFormatGroup.bgra8888 // Better for iOS face detection
-            : ImageFormatGroup.yuv420,
-      );
-      // Initialize the controller
-      if (kDebugMode) {
-        print('Initializing camera controller...');
-      }
-      await _cameraController!.initialize();
-
-      // Apply platform-specific optimizations
-      if (Platform.isIOS) {
-        if (kDebugMode) {
-          print('Applying iOS-specific optimizations');
-        }
-        await _optimizeForIOS();
-      } else if (Platform.isAndroid) {
-        if (kDebugMode) {
-          print('Applying Android-specific optimizations');
-        }
-        await _optimizeForAndroid();
-      }
-
-      if (kDebugMode) {
-        print('Camera initialized successfully');
-      }
-    } on CameraException catch (e) {
-      if (kDebugMode) {
-        print('Camera initialization error: ${e.description}');
-      }
-      throw CameraException(
-          'CameraInitError', 'Failed to initialize camera: ${e.description}');
-    } catch (e) {
-      if (kDebugMode) {
-        print('Camera initialization error: $e');
-      }
-      throw Exception('Failed to initialize camera: $e');
-    }
-  }
-
-  Future<void> _optimizeForIOS() async {
-    if (_cameraController == null) return;
-
-    try {
-      await _cameraController!.setFlashMode(FlashMode.off);
-      await _cameraController!.setExposureMode(ExposureMode.auto);
-      await _cameraController!.setFocusMode(FocusMode.auto);
-      await _cameraController!
-          .lockCaptureOrientation(DeviceOrientation.portraitUp);
-    } catch (e) {
-      debugPrint('Error optimizing camera for iOS: $e');
-    }
-  }
-
-  Future<void> _optimizeForAndroid() async {
-    if (_cameraController == null) return;
-
-    try {
-      await _cameraController!.setFlashMode(FlashMode.off);
-      await _cameraController!.setExposureMode(ExposureMode.auto);
-      await _cameraController!.setFocusMode(FocusMode.auto);
-    } catch (e) {
-      debugPrint('Error optimizing camera for Android: $e');
-    }
-  }
+  // Default constructor
+  FaceDetectionService()
+      : _faceDetector = FaceDetector(
+          options: FaceDetectorOptions(
+            enableContours: true,
+            enableLandmarks: true,
+            enableClassification: true,
+            minFaceSize: 0.15,
+            performanceMode: FaceDetectorMode.accurate,
+          ),
+        );
 
   CameraController? get cameraController => _cameraController;
 
+  // Initialize camera
+  Future<void> initializeCamera() async {
+    // Get available cameras
+    final cameras = await availableCameras();
+    if (cameras.isEmpty) {
+      throw Exception('No cameras available');
+    }
+
+    // Find front camera
+    final frontCamera = cameras.firstWhere(
+      (camera) => camera.lensDirection == CameraLensDirection.front,
+      orElse: () => cameras.first,
+    );
+
+    // Initialize camera controller
+    _cameraController = CameraController(
+      frontCamera,
+      ResolutionPreset.medium,
+      enableAudio: false,
+      imageFormatGroup: Platform.isAndroid
+          ? ImageFormatGroup.yuv420
+          : ImageFormatGroup.bgra8888,
+    );
+
+    // Initialize camera
+    await _cameraController!.initialize();
+
+    // Set fixed orientation to portrait
+    await _cameraController!.lockCaptureOrientation(
+        DeviceOrientation.portraitUp); // Initialize liveness detection manager
+    _livenessManager = liveness.LivenessDetectionManager(
+      cameraController: _cameraController!,
+      faceDetector: _faceDetector,
+    );
+  }
+
   Future<void> dispose() async {
+    if (_livenessManager != null) {
+      _livenessManager!.dispose();
+    }
+
     try {
       await _faceDetector.close();
       await _cameraController?.dispose();
@@ -409,6 +348,80 @@ class FaceDetectionService {
         'success': false,
         'message': 'Network error: $e',
       };
+    }
+  }
+
+  // Perform real-time liveness check with action detection
+  Future<Map<String, dynamic>> performRealTimeLivenessCheck(
+      String token, LivenessAction action, int courseId) async {
+    if (_cameraController == null ||
+        !_cameraController!.value.isInitialized ||
+        _livenessManager == null) {
+      return {
+        'success': false,
+        'message': 'Camera not initialized',
+      };
+    }
+
+    try {
+      if (kDebugMode) {
+        print('Starting real-time liveness check for action: $action');
+      }
+
+      // Set timeout duration for liveness detection
+      const int livenessCheckDuration = 5; // seconds
+
+      // Map our LivenessAction enum to the library's enum
+      final livenessAction = _mapToLivenessManagerAction(action);
+
+      // Perform real-time action detection
+      final actionDetected = await _livenessManager!
+          .detectAction(livenessAction, livenessCheckDuration);
+
+      if (!actionDetected) {
+        return {
+          'success': false,
+          'message': 'Liveness check failed: Action not detected',
+        };
+      }
+
+      // If we got here, the action was detected
+      // Now capture a final image for server verification
+      final imageBytes = await captureImage();
+      if (imageBytes == null) {
+        return {
+          'success': false,
+          'message': 'Failed to capture verification image',
+        };
+      }
+
+      // Convert to base64
+      final base64Image = imageToBase64(imageBytes);
+
+      // Send to server for verification (use the original API for now)
+      return await performLivenessCheck(token, base64Image, courseId);
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error in real-time liveness check: $e');
+      }
+      return {
+        'success': false,
+        'message': 'Liveness check error: $e',
+      };
+    }
+  }
+
+  // Map our LivenessAction enum to the LivenessDetectionManager's enum
+  liveness.LivenessAction _mapToLivenessManagerAction(LivenessAction action) {
+    switch (action) {
+      case LivenessAction.blink:
+        return liveness.LivenessAction.blink;
+      case LivenessAction.turnLeft:
+        return liveness.LivenessAction.turnLeft;
+      case LivenessAction.turnRight:
+        return liveness.LivenessAction.turnRight;
+      default:
+        return liveness.LivenessAction.blink;
     }
   }
 }

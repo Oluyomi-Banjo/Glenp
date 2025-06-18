@@ -209,33 +209,27 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen>
 
     setState(() {
       _isProcessing = true;
-      _statusMessage = 'Verifying...';
+      _statusMessage = 'Performing liveness check: $_livenessAction';
     });
 
     try {
-      // Capture image
-      final imageBytes = await _faceService.captureImage();
-
-      if (imageBytes == null) {
-        _handleLivenessFailure('Failed to capture image');
-        return;
-      }
-      // Convert to base64
-      final base64Image = _faceService.imageToBase64(imageBytes);
-
       // Get auth token before async gap
       final authService = Provider.of<AuthService>(context, listen: false);
       final authToken = authService.token;
 
-      // Perform liveness check
+      // Check authentication
       if (authToken == null) {
         _handleLivenessFailure('You are not authenticated');
         return;
       }
 
-      final result = await _faceService.performLivenessCheck(
+      // Map instruction to liveness action
+      final livenessAction = _getLivenessActionFromInstruction(_livenessAction);
+
+      // Perform real-time liveness check
+      final result = await _faceService.performRealTimeLivenessCheck(
         authToken,
-        base64Image,
+        livenessAction,
         widget.course.id,
       );
 
@@ -375,6 +369,24 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen>
     }
   }
 
+  // Map instruction text to liveness action
+  LivenessAction _getLivenessActionFromInstruction(String instruction) {
+    instruction = instruction.toLowerCase();
+
+    if (instruction.contains('blink')) {
+      return LivenessAction.blink;
+    } else if (instruction.contains('turn left') ||
+        instruction.contains('look left')) {
+      return LivenessAction.turnLeft;
+    } else if (instruction.contains('turn right') ||
+        instruction.contains('look right')) {
+      return LivenessAction.turnRight;
+    }
+
+    // Default to blink as it's usually the easiest to detect
+    return LivenessAction.blink;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -479,7 +491,6 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen>
             ],
           ),
         );
-
       case CheckInStep.livenessDetection:
         if (!_isCameraInitialized) {
           return const Center(child: CircularProgressIndicator());
@@ -494,6 +505,26 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen>
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(12),
                 child: CameraPreview(_faceService.cameraController!),
+              ),
+            ),
+
+            // Face positioning guide
+            Positioned.fill(
+              child: Container(
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.blue, width: 2),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Center(
+                  child: Container(
+                    width: 200,
+                    height: 200,
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.white, width: 2),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ),
               ),
             ),
 
@@ -534,6 +565,29 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen>
                       ),
                     ),
                   ],
+                ),
+              ),
+            ),
+
+            // Animated liveness action icon
+            Positioned(
+              bottom: 80,
+              child: AnimatedOpacity(
+                opacity: _countdownSeconds > 0 ? 1.0 : 0.0,
+                duration: const Duration(milliseconds: 500),
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.2),
+                        blurRadius: 8,
+                      ),
+                    ],
+                  ),
+                  child: _buildLivenessActionIcon(),
                 ),
               ),
             ),
@@ -712,5 +766,48 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen>
           ],
         );
     }
+  }
+
+  // Build an icon representing the current liveness action
+  Widget _buildLivenessActionIcon() {
+    String action = _livenessAction.toLowerCase();
+
+    if (action.contains('blink')) {
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.remove_red_eye, size: 32, color: Colors.blue),
+          const SizedBox(width: 8),
+          Column(
+            children: [
+              const Icon(Icons.arrow_upward, size: 16, color: Colors.blue),
+              const SizedBox(height: 2),
+              const Icon(Icons.arrow_downward, size: 16, color: Colors.blue),
+            ],
+          ),
+        ],
+      );
+    } else if (action.contains('left')) {
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.face, size: 32, color: Colors.blue),
+          const SizedBox(width: 8),
+          const Icon(Icons.arrow_back, size: 24, color: Colors.blue),
+        ],
+      );
+    } else if (action.contains('right')) {
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.face, size: 32, color: Colors.blue),
+          const SizedBox(width: 8),
+          const Icon(Icons.arrow_forward, size: 24, color: Colors.blue),
+        ],
+      );
+    }
+
+    // Default icon
+    return const Icon(Icons.face, size: 32, color: Colors.blue);
   }
 }
