@@ -19,13 +19,13 @@ class ApiConstants {
 class AppConstants {
   static const String appName = 'University Attendance';
   static const double defaultPadding = 16.0;
-  static const double borderRadius = 10.0;  // Liveness detection
-  static const int livenessCheckDuration = 5; // seconds
+  static const double borderRadius = 10.0;
+
+  // Liveness detection
+  static const int livenessCheckDuration = 3; // seconds
   static const List<String> livenessActions = [
-    'Blink your eyes',
-    'Turn your head left',
-    'Turn your head right',
-    'Nod your head',
-    'Smile'
+    'Blink',
+    'Turn Left',
+    'Turn Right'
   ];
 }

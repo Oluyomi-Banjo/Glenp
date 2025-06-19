@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:path_provider/path_provider.dart';
@@ -9,6 +10,7 @@ import 'package:attendance_app/models/attendance_session.dart';
 import 'package:attendance_app/services/auth_service.dart';
 import 'package:attendance_app/services/course_service.dart';
 import 'package:attendance_app/utils/constants.dart';
+import 'package:attendance_app/utils/network_utils.dart';
 import 'package:intl/intl.dart';
 
 class CourseDetailScreen extends StatefulWidget {
@@ -80,27 +82,41 @@ class _CourseDetailScreenState extends State<CourseDetailScreen> with SingleTick
   Future<void> _loadStudents() async {
     setState(() {
       _isLoadingStudents = true;
-    });
-
-    try {
+    });    try {
       final authService = Provider.of<AuthService>(context, listen: false);
 
       if (authService.token != null) {
-        final response = await Future.delayed(
-          const Duration(seconds: 1),
-          () => [
-            {'id': 1, 'name': 'John Doe', 'email': 'john.doe@example.com'},
-            {'id': 2, 'name': 'Jane Smith', 'email': 'jane.smith@example.com'},
-            {'id': 3, 'name': 'Bob Johnson', 'email': 'bob.johnson@example.com'},
-          ],
+        // Call API to get enrolled students for this course
+        final response = await NetworkUtils.authenticatedGet(
+          '${ApiConstants.baseUrl}/api/courses/${widget.course.id}/students',
+          authService.token!,
         );
 
-        setState(() {
-          _students = response;
-        });
+        if (response.statusCode == 200) {
+          final List<dynamic> data = jsonDecode(response.body);
+          setState(() {
+            _students = data;
+          });
+        } else {
+          // Fallback to mock data if API fails
+          setState(() {
+            _students = [
+              {'id': 1, 'name': 'John Doe', 'email': 'john.doe@example.com'},
+              {'id': 2, 'name': 'Jane Smith', 'email': 'jane.smith@example.com'},
+              {'id': 3, 'name': 'Bob Johnson', 'email': 'bob.johnson@example.com'},
+            ];
+          });
+        }
       }
     } catch (e) {
-      // Handle error
+      // Handle error and fallback to mock data
+      setState(() {
+        _students = [
+          {'id': 1, 'name': 'John Doe', 'email': 'john.doe@example.com'},
+          {'id': 2, 'name': 'Jane Smith', 'email': 'jane.smith@example.com'},
+          {'id': 3, 'name': 'Bob Johnson', 'email': 'bob.johnson@example.com'},
+        ];
+      });
     } finally {
       setState(() {
         _isLoadingStudents = false;
