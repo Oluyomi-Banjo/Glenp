@@ -303,6 +303,44 @@ class FaceDetectionService {
     }
   }
 
+  Future<Map<String, dynamic>> performLivenessCheck(
+      String token, String imageBase64, int courseId) async {
+    try {
+      // Add platform info for server-side optimizations
+      final Map<String, dynamic> payload = {
+        'face_image': imageBase64,
+        'course_id': courseId,
+        'platform': Platform.isIOS ? 'ios' : 'android',
+        'device_info': {
+          'os_version': Platform.operatingSystemVersion,
+          'model': Platform.isIOS ? 'iOS Device' : 'Android Device',
+        }
+      };
+
+      final response = await NetworkUtils.authenticatedPost(
+        '${ApiConstants.baseUrl}${ApiConstants.livenessCheck}',
+        token,
+        payload,
+      );
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      } else {
+        return {
+          'success': false,
+          'message':
+              'Failed to verify liveness: ${jsonDecode(response.body)['detail']}',
+        };
+      }
+    } catch (e) {
+      debugPrint('Error performing liveness check: $e');
+      return {
+        'success': false,
+        'message': 'Network error: $e',
+      };
+    }
+  }
+
   Future<Map<String, dynamic>> verifyFace(
       String token, String imageBase64, int sessionId) async {
     try {
