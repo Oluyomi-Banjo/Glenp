@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:camera/camera.dart';
@@ -11,13 +10,7 @@ import 'package:attendance_app/services/face_detection_service.dart';
 import 'package:attendance_app/utils/constants.dart';
 import 'package:attendance_app/utils/permission_utils.dart';
 
-enum CheckInStep {
-  initial,
-  livenessDetection,
-  faceRecognition,
-  completed,
-  failed
-}
+enum CheckInStep { initial, faceRecognition, completed, failed }
 
 class AttendanceCheckInScreen extends StatefulWidget {
   final Course course;
@@ -42,11 +35,6 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen>
   String? _errorMessage;
   String _statusMessage = 'Preparing camera...';
   CheckInStep _currentStep = CheckInStep.initial;
-  String _livenessAction = '';
-  int _livenessAttemptsRemaining = 3;
-  int _countdownSeconds = 0;
-  Timer? _countdownTimer;
-  bool _livenessCheckPassed = false;
   @override
   void initState() {
     super.initState();
@@ -58,7 +46,6 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _countdownTimer?.cancel();
     _faceService.dispose();
     super.dispose();
   }
@@ -152,6 +139,13 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen>
           _statusMessage = 'Ready for attendance check-in';
         });
 
+        // Automatically proceed to face recognition after a brief delay
+        Future.delayed(const Duration(seconds: 1), () {
+          if (mounted) {
+            _startFaceRecognition();
+          }
+        });
+
         if (kDebugMode) {
           print('Camera initialized successfully');
         }
@@ -172,114 +166,7 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen>
     }
   }
 
-  void _startLivenessDetection() {
-    setState(() {
-      _currentStep = CheckInStep.livenessDetection;
-      _livenessAction = _getRandomLivenessAction();
-      _livenessAttemptsRemaining = 3;
-      _countdownSeconds = AppConstants.livenessCheckDuration;
-      _statusMessage = 'Please $_livenessAction';
-    });
-
-    _startCountdown();
-  }
-
-  String _getRandomLivenessAction() {
-    final random = Random();
-    return AppConstants
-        .livenessActions[random.nextInt(AppConstants.livenessActions.length)];
-  }
-
-  void _startCountdown() {
-    _countdownTimer?.cancel();
-    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (_countdownSeconds > 0) {
-        setState(() {
-          _countdownSeconds--;
-        });
-      } else {
-        timer.cancel();
-        _performLivenessCheck();
-      }
-    });
-  }
-
-  Future<void> _performLivenessCheck() async {
-    if (_isProcessing) return;
-
-    setState(() {
-      _isProcessing = true;
-      _statusMessage = 'Verifying...';
-    });
-
-    try {
-      // Capture image
-      final imageBytes = await _faceService.captureImage();
-
-      if (imageBytes == null) {
-        _handleLivenessFailure('Failed to capture image');
-        return;
-      }
-      // Convert to base64
-      final base64Image = _faceService.imageToBase64(imageBytes);
-
-      // Get auth token before async gap
-      final authService = Provider.of<AuthService>(context, listen: false);
-      final authToken = authService.token;
-
-      // Perform liveness check
-      if (authToken == null) {
-        _handleLivenessFailure('You are not authenticated');
-        return;
-      }
-
-      final result = await _faceService.performLivenessCheck(
-        authToken,
-        base64Image,
-        widget.course.id,
-      );
-
-      if (result['success']) {
-        setState(() {
-          _livenessCheckPassed = true;
-          _statusMessage = 'Liveness check passed!';
-        });
-
-        // Wait a moment before proceeding to face recognition
-        Future.delayed(const Duration(seconds: 1), () {
-          if (mounted) {
-            _proceedToFaceRecognition();
-          }
-        });
-      } else {
-        _handleLivenessFailure(result['message'] ?? 'Liveness check failed');
-      }
-    } catch (e) {
-      _handleLivenessFailure('Error: $e');
-    } finally {
-      setState(() {
-        _isProcessing = false;
-      });
-    }
-  }
-
-  void _handleLivenessFailure(String message) {
-    setState(() {
-      _livenessAttemptsRemaining--;
-      _errorMessage = message;
-
-      if (_livenessAttemptsRemaining > 0) {
-        _statusMessage = 'Try again. Please $_livenessAction';
-        _countdownSeconds = AppConstants.livenessCheckDuration;
-        _startCountdown();
-      } else {
-        _currentStep = CheckInStep.failed;
-        _statusMessage = 'Liveness check failed';
-      }
-    });
-  }
-
-  void _proceedToFaceRecognition() {
+  void _startFaceRecognition() {
     setState(() {
       _currentStep = CheckInStep.faceRecognition;
       _statusMessage = 'Position your face for recognition';
@@ -296,16 +183,6 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen>
 
   Future<void> _performFaceRecognition() async {
     if (_isProcessing) return;
-
-    // Check if liveness check has been passed
-    if (!_livenessCheckPassed) {
-      setState(() {
-        _errorMessage = 'Liveness check must be passed first';
-        _currentStep = CheckInStep.failed;
-        _statusMessage = 'Authentication failed';
-      });
-      return;
-    }
 
     setState(() {
       _isProcessing = true;
@@ -344,9 +221,9 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen>
       }
 
       final result = await _faceService.checkInWithFace(
-        authService.token!,
+        authToken,
         base64Image,
-        widget.course.id,
+        widget.session.id,
       );
 
       if (result['success']) {
@@ -473,82 +350,11 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen>
               ),
               SizedBox(height: 8),
               Text(
-                'You will need to complete a liveness check\nfollowed by face recognition.',
+                'Position your face in the frame for facial recognition.',
                 textAlign: TextAlign.center,
               ),
             ],
           ),
-        );
-
-      case CheckInStep.livenessDetection:
-        if (!_isCameraInitialized) {
-          return const Center(child: CircularProgressIndicator());
-        }
-
-        return Stack(
-          alignment: Alignment.center,
-          children: [
-            // Camera preview
-            AspectRatio(
-              aspectRatio: 1,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: CameraPreview(_faceService.cameraController!),
-              ),
-            ),
-
-            // Liveness instruction
-            Positioned(
-              top: 16,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      'Please $_livenessAction',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: const BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: Colors.white,
-                      ),
-                      child: Text(
-                        '$_countdownSeconds',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-
-            // Processing indicator
-            if (_isProcessing)
-              Container(
-                color: Colors.black54,
-                child: const Center(
-                  child: CircularProgressIndicator(
-                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                  ),
-                ),
-              ),
-          ],
         );
 
       case CheckInStep.faceRecognition:
@@ -660,17 +466,13 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen>
     switch (_currentStep) {
       case CheckInStep.initial:
         return ElevatedButton(
-          onPressed: _startLivenessDetection,
+          onPressed: _startFaceRecognition,
           style: ElevatedButton.styleFrom(
             foregroundColor: Colors.white,
             backgroundColor: Colors.blue,
           ),
           child: const Text('Start Check-in'),
         );
-
-      case CheckInStep.livenessDetection:
-        // No button during liveness detection
-        return const SizedBox.shrink();
 
       case CheckInStep.faceRecognition:
         // No button during face recognition
@@ -700,8 +502,8 @@ class _AttendanceCheckInScreenState extends State<AttendanceCheckInScreen>
                   _currentStep = CheckInStep.initial;
                   _errorMessage = null;
                   _statusMessage = 'Ready for check-in';
-                  _livenessCheckPassed = false;
                 });
+                _startFaceRecognition();
               },
               style: ElevatedButton.styleFrom(
                 foregroundColor: Colors.white,

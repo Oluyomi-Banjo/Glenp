@@ -189,12 +189,9 @@ class CourseService extends ChangeNotifier {
 
   Future<String?> exportAttendance(String token, int courseId) async {
     try {
-      final response = await http.get(
-        Uri.parse(
-            '${ApiConstants.baseUrl}/api/attendance/export/course/$courseId'),
-        headers: {
-          'Authorization': 'Bearer $token',
-        },
+      final response = await NetworkUtils.authenticatedGet(
+        '${ApiConstants.baseUrl}${ApiConstants.attendance}/export/course/$courseId',
+        token,
       );
 
       if (response.statusCode == 200) {
@@ -308,6 +305,30 @@ class CourseService extends ChangeNotifier {
       _isLoading = false;
       // Notify listeners after data is loaded
       Future.microtask(() => notifyListeners());
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getEnrolledStudents(
+      String token, int courseId) async {
+    try {
+      final response = await NetworkUtils.authenticatedGet(
+        '${ApiConstants.baseUrl}${ApiConstants.courses}/$courseId/students',
+        token,
+      );
+
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        return data.cast<Map<String, dynamic>>();
+      } else {
+        throw Exception(
+            'Failed to fetch enrolled students: ${response.statusCode}');
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error fetching enrolled students: $e');
+      }
+      // Return empty list on error
+      return [];
     }
   }
 }
