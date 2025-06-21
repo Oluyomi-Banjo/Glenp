@@ -2,10 +2,14 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>This app uses speech recognition to enable voice commands for email management.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>This app requires microphone access to capture your voice commands.</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Attendance App</string>
+	<string>Voice Email Assistant</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -13,7 +17,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>attendance_app</string>
+	<string>voice_email_assistant</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -31,21 +35,8 @@
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
 	</array>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>This app needs access to the local network to support debugging and communication.</string>
-	<key>NSBonjourServices</key>
-	<array>
-		<string>_dartobservatory._tcp</string>
-	</array>
-	<key>NSCameraUsageDescription</key>
-	<string>This app needs camera access to scan your face for attendance verification</string>
-	<key>NSPhotoLibraryUsageDescription</key>
-	<string>This app needs photo library access to select photos for profile pictures</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>This app may require microphone access for video features</string>
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
@@ -57,10 +48,27 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
-	<key>NSAppTransportSecurity</key>
+	
+	<!-- Permissions for voice email assistant -->
+	<key>NSFaceIDUsageDescription</key>
+	<string>This app uses Face ID for secure authentication to access your emails.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>This app may use camera for Face ID authentication.</string>
+	<key>CFBundleURLTypes</key>
+	<array>
 	<dict>
-		<key>NSAllowsArbitraryLoads</key>
-		<true/>
+		<key>CFBundleTypeRole</key>
+		<string>Editor</string>
+		<key>CFBundleURLSchemes</key>
+		<array>
+		<string>com.googleusercontent.apps.579913852469-ff9ip2u6eaubth514fskqustfmk3gcku</string>
+		</array>
 	</dict>
+	</array>
+
+	<key>GIDClientID</key>
+	<string>579913852469-ff9ip2u6eaubth514fskqustfmk3gcku.apps.googleusercontent.com</string>
+
+
 </dict>
 </plist>

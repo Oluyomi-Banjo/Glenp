@@ -1,89 +1,125 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import 'package:attendance_app/services/auth_service.dart';
+import 'package:flutter_spinkit/flutter_spinkit.dart';
+import '../services/auth_service.dart';
+import '../services/tts_service.dart';
+import '../services/google_auth_service.dart';
+import 'google_sign_in_screen.dart';
+import 'voice_home_screen.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
 
   @override
-  State<SplashScreen> createState() => _SplashScreenState();
+  SplashScreenState createState() => SplashScreenState();
 }
 
-class _SplashScreenState extends State<SplashScreen> {
+class SplashScreenState extends State<SplashScreen> {
+  final TTSService _ttsService = TTSService();
+  final AuthService _authService = AuthService();
+  final GoogleAuthService _googleAuthService = GoogleAuthService();
+
   @override
   void initState() {
     super.initState();
-    _checkAuth();
+    _initialize();
   }
 
-  Future<void> _checkAuth() async {
-    // Wait for a short delay to show splash screen
-    await Future.delayed(const Duration(seconds: 2));
-
-    if (!mounted) return;
-
-    final authService = Provider.of<AuthService>(context, listen: false);
-
-    if (authService.isAuthenticated) {
-      if (authService.isStudent) {
-        Navigator.of(context).pushReplacementNamed('/student_home');
-      } else if (authService.isEducator) {
-        Navigator.of(context).pushReplacementNamed('/educator_home');
-      } else {
-        Navigator.of(context).pushReplacementNamed('/login');
+  Future<void> _initialize() async {
+    try {
+      // Initialize TTS
+      await _ttsService.initTTS();
+      
+      // Delay for splash screen visibility
+      await Future.delayed(const Duration(seconds: 2));
+      
+      // Authenticate with biometrics
+      final authenticated = await _authService.authenticate();
+      
+      if (!authenticated) {
+        // Authentication failed
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Authentication failed. Please try again.'),
+              action: SnackBarAction(
+                label: 'Retry',
+                onPressed: _initialize,
+              ),
+            ),
+          );
+        }
+        return;
       }
-    } else {
-      Navigator.of(context).pushReplacementNamed('/login');
+      
+      // Check if first time user
+      final isFirstTimeUser = await _authService.isFirstTimeUser();
+      
+      if (mounted) {
+        if (isFirstTimeUser) {
+          // First time user - navigate to Google Sign-in
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(
+              builder: (context) => const GoogleSignInScreen(),
+            ),
+          );
+        } else {
+          // Check if still signed in with Google
+          if (_googleAuthService.isSignedIn) {
+            // Already signed in - go to home screen
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(
+                builder: (context) => const VoiceHomeScreen(),
+              ),
+            );
+          } else {
+            // Need to sign in again
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(
+                builder: (context) => const GoogleSignInScreen(),
+              ),
+            );
+          }
+        }
+      }
+    } catch (e) {
+      // Handle errors
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            action: SnackBarAction(
+              label: 'Retry',
+              onPressed: _initialize,
+            ),
+          ),
+        );
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Container(
-        width: double.infinity,
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              Theme.of(context).primaryColor,
-              Theme.of(context).primaryColor.withAlpha(204), // 0.8 * 255 = 204
-            ],
-          ),
-        ),
-        child: const Column(
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      body: Center(
+        child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // Logo or icon
-            Icon(
-              Icons.face_retouching_natural,
-              size: 80,
-              color: Colors.white,
+            const Icon(
+              Icons.email,
+              size: 120,
+              color: Colors.blue,
             ),
-            SizedBox(height: 24),
-            // App name
-            const Text(
-              'University Attendance',
-              style: TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-              ),
+            const SizedBox(height: 30),
+            Text(
+              'Voice Email Assistant',
+              style: Theme.of(context).textTheme.headlineSmall,
+              semanticsLabel: 'Voice Email Assistant App',
             ),
-            const SizedBox(height: 8),
-            // Tagline
-            const Text(
-              'Facial Recognition Attendance System',
-              style: TextStyle(
-                fontSize: 16,
-                color: Colors.white70,
-              ),
-            ),
-            const SizedBox(height: 48),
-            // Loading indicator
-            const CircularProgressIndicator(
-              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+            const SizedBox(height: 30),
+            const SpinKitDoubleBounce(
+              color: Colors.blue,
+              size: 50.0,
             ),
           ],
         ),
